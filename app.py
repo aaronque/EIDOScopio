@@ -4,13 +4,15 @@ from dash import dcc, html, dash_table, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
 import pandas as pd
 import requests
+import time
 import re
 import io
 
-# --- Lógica de Búsqueda ---
+# --- Lógica de Búsqueda (Tus funciones originales, sin cambios) ---
 API_BASE_URL = "https://iepnb.gob.es/api/especie"
 
 def obtener_id_por_nombre(nombre_cientifico):
+    """Busca el ID de taxón para un nombre científico."""
     try:
         respuesta = requests.get(f"{API_BASE_URL}/rpc/obtenertaxonespornombre", params={"_nombretaxon": nombre_cientifico})
         respuesta.raise_for_status()
@@ -24,6 +26,7 @@ def obtener_id_por_nombre(nombre_cientifico):
         return None
 
 def obtener_nombre_por_id(taxon_id):
+    """Busca el nombre científico aceptado para un ID de taxón."""
     try:
         respuesta = requests.get(f"{API_BASE_URL}/rpc/obtenertaxonporid", params={"_idtaxon": taxon_id})
         respuesta.raise_for_status()
@@ -35,6 +38,7 @@ def obtener_nombre_por_id(taxon_id):
         return None
 
 def obtener_datos_proteccion(taxon_id, nombre_cientifico_base):
+    """Obtiene y procesa los datos de protección para un único taxón ID."""
     protecciones = {"Especie": nombre_cientifico_base}
     try:
         respuesta_legal = requests.get(f"{API_BASE_URL}/rpc/obtenerestadoslegalesportaxonid", params={"_idtaxon": taxon_id})
@@ -50,34 +54,74 @@ def obtener_datos_proteccion(taxon_id, nombre_cientifico_base):
             elif ambito == "Internacional": columna = item.get('dataset', 'Convenio Internacional')
             if columna:
                 if columna in protecciones and protecciones[columna] != '-':
-                    if estado not in protecciones[columna]:
-                        protecciones[columna] += f", {estado}"
-                else:
-                    protecciones[columna] = estado
+                    if estado not in protecciones[columna]: protecciones[columna] += f", {estado}"
+                else: protecciones[columna] = estado
         return protecciones
     except requests.exceptions.RequestException:
         protecciones['Error'] = 'Fallo al obtener datos legales'
         return protecciones
 
-# --- Inicialización de la App ---
+def generar_tabla_completa(listado_nombres=None, listado_ids=None):
+    """Orquesta la búsqueda y genera el DataFrame."""
+    resultados_exitosos = []
+    resultados_fallidos = []
+    listado_nombres = listado_nombres or []
+    listado_ids = listado_ids or []
+
+    for nombre in listado_nombres:
+        time.sleep(1)
+        taxon_id = obtener_id_por_nombre(nombre)
+        if taxon_id:
+            datos_especie = obtener_datos_proteccion(taxon_id, nombre)
+            resultados_exitosos.append(datos_especie)
+        else:
+            resultados_fallidos.append({"Especie": nombre, "Error": "ID de taxón no encontrado"})
+
+    for taxon_id in listado_ids:
+        time.sleep(1)
+        nombre_cientifico = obtener_nombre_por_id(taxon_id)
+        if nombre_cientifico:
+            datos_especie = obtener_datos_proteccion(taxon_id, nombre_cientifico)
+            resultados_exitosos.append(datos_especie)
+        else:
+            resultados_fallidos.append({"Especie": f"ID: {taxon_id}", "Error": "Nombre científico no encontrado"})
+
+    datos_para_tabla = resultados_exitosos + resultados_fallidos
+    if not datos_para_tabla: return pd.DataFrame()
+
+    df = pd.DataFrame(datos_para_tabla)
+    df.fillna('-', inplace=True)
+    if 'Especie' in df.columns:
+        cols = df.columns.tolist()
+        cols.insert(0, cols.pop(cols.index('Especie')))
+        if 'Error' in cols:
+            cols.append(cols.pop(cols.index('Error')))
+        df = df.reindex(columns=cols)
+    return df
+
+# --- Inicialización de la App Dash ---
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 server = app.server
 
+# --- LAYOUT DE LA APP ---
 app.layout = dbc.Container([
-    dcc.Store(id='store-progreso'),
-    dcc.Store(id='store-total'),
-    dcc.Store(id='store-resultados-parciales'),
-    dcc.Interval(id='intervalo-progreso', interval=500, disabled=True),
+    dcc.Store(id='store-resultados'),
+    dcc.Download(id='download-excel'),
 
     html.H1("EIDOScopio: 🔎 Buscador del Estatus Legal de Especies", className="my-4 text-center"),
 
     dbc.Accordion([
-        dbc.AccordionItem([
-            html.P("- Para búsquedas por nombre científico: Introduce un nombre por cada línea."),
-            html.P("- Para búsquedas por ID de EIDOS: Escribe los números separados por espacios o saltos de línea."),
-            html.P("- Haz clic en 'Comenzar Búsqueda' para procesar los datos.")
-        ], title="ℹ️ Ver instrucciones de uso"),
+        dbc.AccordionItem(
+            [
+                html.P("- Para búsquedas por nombre científico: Introduce un nombre por cada línea."),
+                html.P("- Para búsquedas por ID de EIDOS: Escribe los números separados por espacios o saltos de línea."),
+                html.P("- Haz clic en 'Comenzar Búsqueda' para procesar los datos.")
+            ],
+            title="ℹ️ Ver instrucciones de uso",
+        )
     ]),
+    
+    dbc.Button("Cargar datos de ejemplo", id="btn-ejemplo", color="secondary", className="mt-3 mb-3"),
 
     dbc.Row([
         dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nSus scrofa...", style={'width': '100%', 'height': 200})),
@@ -85,109 +129,107 @@ app.layout = dbc.Container([
     ]),
 
     dbc.Button("🚀 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
-
-    html.Div(id='contenedor-barra-progreso', children=[
-        dbc.Progress(id="barra-progreso", striped=True, animated=True, value=0, max=100, className="mt-4 mb-4")
-    ], style={'display': 'none'}),
-
-    html.Div(id='output-resultados'),
-
+    
     html.Hr(),
+
+    dcc.Loading(id="loading-icon", children=[html.Div(id='output-resultados')], type="default"),
+
+    # --- FOOTER ---
+    html.Hr(className="my-5"),
     html.Div(
         dbc.Row([
             dbc.Col(html.P("Creado por Aarón Quesada"), className="text-center text-md-start"),
-            dbc.Col(html.Div([
-                html.A("LinkedIn", href="https://www.linkedin.com/in/aaronq/", target="_blank", className="ms-3"),
-                html.A("GitHub", href="https://github.com/aaronque", target="_blank", className="ms-3"),
-            ]), className="text-center text-md-end")
+            dbc.Col(
+                html.Div([
+                    html.A("LinkedIn", href="https://www.linkedin.com/in/aaronq/", target="_blank", className="ms-3"),
+                    html.A("GitHub", href="https://github.com/aaronque", target="_blank", className="ms-3"),
+                ]),
+                className="text-center text-md-end"
+            )
         ]),
-        className="text-muted")
-], fluid=True)
+        className="text-muted"
+    )
 
-# --- Callbacks ---
+], fluid=True, className="mb-5")
+
+
+# --- CALLBACKS PARA LA INTERACTIVIDAD ---
 
 @app.callback(
-    Output('store-progreso', 'data'),
-    Output('store-total', 'data'),
-    Output('store-resultados-parciales', 'data'),
-    Output('intervalo-progreso', 'disabled'),
-    Output('contenedor-barra-progreso', 'style'),
+    Output('area-nombres', 'value'),
+    Output('area-ids', 'value'),
+    Input('btn-ejemplo', 'n_clicks'),
+    prevent_initial_call=True
+)
+def cargar_ejemplo(n_clicks):
+    ejemplo_nombres = "Lynx pardinus\nUrsus arctos\nGamusinus alipendis"
+    ejemplo_ids = "14389\n999999"
+    return ejemplo_nombres, ejemplo_ids
+
+@app.callback(
+    Output('output-resultados', 'children'),
+    Output('store-resultados', 'data'),
     Input('btn-busqueda', 'n_clicks'),
     State('area-nombres', 'value'),
     State('area-ids', 'value'),
     prevent_initial_call=True
 )
-def iniciar_progreso(n_clicks, nombres_texto, ids_texto):
-    lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()] if nombres_texto else []
-    lista_ids = [int(id_) for id_ in re.split(r'\s+', ids_texto.strip()) if id_.isdigit()] if ids_texto else []
+def ejecutar_busqueda(n_clicks, nombres_texto, ids_texto):
+    if not nombres_texto and not ids_texto:
+        return dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), None
 
-    progreso = {
-        'nombres': lista_nombres,
-        'ids': lista_ids,
-        'hecho': 0
-    }
+    lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
+    lista_ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
+    
+    df_resultado = generar_tabla_completa(lista_nombres, lista_ids)
 
-    return progreso, len(lista_nombres) + len(lista_ids), [], False, {'display': 'block'}
-
-@app.callback(
-    Output('store-progreso', 'data'),
-    Output('store-resultados-parciales', 'data'),
-    Output('barra-progreso', 'value'),
-    Output('intervalo-progreso', 'disabled'),
-    Output('output-resultados', 'children'),
-    Input('intervalo-progreso', 'n_intervals'),
-    State('store-progreso', 'data'),
-    State('store-total', 'data'),
-    State('store-resultados-parciales', 'data'),
-    prevent_initial_call=True
-)
-def avanzar_búsqueda(_, progreso, total, resultados):
-    if progreso is None:
-        return no_update, no_update, no_update, True, no_update
-
-    if progreso['nombres']:
-        nombre = progreso['nombres'].pop(0)
-        taxon_id = obtener_id_por_nombre(nombre)
-        if taxon_id:
-            resultados.append(obtener_datos_proteccion(taxon_id, nombre))
-        else:
-            resultados.append({"Especie": nombre, "Error": "ID no encontrado"})
-    elif progreso['ids']:
-        taxon_id = progreso['ids'].pop(0)
-        nombre = obtener_nombre_por_id(taxon_id)
-        if nombre:
-            resultados.append(obtener_datos_proteccion(taxon_id, nombre))
-        else:
-            resultados.append({"Especie": f"ID: {taxon_id}", "Error": "Nombre no encontrado"})
-
-    progreso['hecho'] += 1
-    porcentaje = int(100 * progreso['hecho'] / total)
-
-    if not progreso['nombres'] and not progreso['ids']:
-        df = pd.DataFrame(resultados)
-        df.fillna('-', inplace=True)
-        if 'Especie' in df.columns:
-            cols = df.columns.tolist()
-            cols.insert(0, cols.pop(cols.index('Especie')))
-            if 'Error' in cols:
-                cols.append(cols.pop(cols.index('Error')))
-            df = df.reindex(columns=cols)
-
-        tabla = dash_table.DataTable(
+    if df_resultado.empty:
+        return dbc.Alert("La búsqueda no produjo resultados.", color="info"), None
+    
+    total_consultados = len(lista_nombres) + len(lista_ids)
+    encontrados = len(df_resultado[df_resultado['Error'] == '-'])
+    columnas_proteccion = [col for col in df_resultado.columns if 'Catálogo' in col or 'Convenio' in col]
+    df_resultado['protegido'] = df_resultado[columnas_proteccion].ne('-').any(axis=1)
+    protegidos = len(df_resultado[df_resultado['protegido'] & (df_resultado['Error'] == '-')])
+    
+    layout_resultados = html.Div([
+        html.H3("📊 Resumen de Resultados", className="mt-4"),
+        dbc.Row([
+            dbc.Col(dbc.Card([dbc.CardHeader("Consultados"), dbc.CardBody(html.H4(total_consultados, className="card-title"))])),
+            dbc.Col(dbc.Card([dbc.CardHeader("Encontrados"), dbc.CardBody(html.H4(encontrados, className="card-title"))])),
+            dbc.Col(dbc.Card([dbc.CardHeader("Con Protección"), dbc.CardBody(html.H4(protegidos, className="card-title"))])),
+        ]),
+        html.Hr(),
+        dbc.Button("📥 Descargar Tabla como Excel", id="btn-descarga", color="success", className="mt-3 mb-3 w-100"),
+        dash_table.DataTable(
             id='tabla-resultados',
-            columns=[{"name": i, "id": i} for i in df.columns],
-            data=df.to_dict('records'),
+            columns=[{"name": i, "id": i} for i in df_resultado.drop(columns=['protegido']).columns],
+            data=df_resultado.to_dict('records'),
             style_table={'overflowX': 'auto'},
             page_size=10,
         )
+    ])
+    
+    return layout_resultados, df_resultado.to_json(date_format='iso', orient='split')
 
-        return None, resultados, 100, True, html.Div([
-            html.H3("🔍 Resultados de la Búsqueda"),
-            tabla
-        ])
+@app.callback(
+    Output('download-excel', 'data'),
+    Input('btn-descarga', 'n_clicks'),
+    State('store-resultados', 'data'),
+    prevent_initial_call=True
+)
+def descargar_excel(n_clicks, json_data):
+    if json_data is None:
+        return no_update
 
-    return progreso, resultados, porcentaje, False, no_update
+    df = pd.read_json(json_data, orient='split')
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.drop(columns=['protegido'], errors='ignore').to_excel(writer, index=False, sheet_name='ProteccionEspecies')
+    output.seek(0)
+    
+    return dcc.send_bytes(output.getvalue(), "proteccion_especies.xlsx")
 
-# --- Run Server ---
+# --- Ejecución del Servidor ---
 if __name__ == '__main__':
     app.run_server(debug=True)
