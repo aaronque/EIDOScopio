@@ -111,8 +111,8 @@ def iniciar_busqueda(n_clicks, nombres_texto, ids_texto):
     if not nombres_texto and not ids_texto:
         return no_update, no_update, True, dbc.Alert("Introduce datos para buscar.", color="warning"), None, None
 
-    nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
-    ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
+    nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()] if nombres_texto else []
+    ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()] if ids_texto else []
     
     tareas = [('nombre', n) for n in nombres] + [('id', i) for i in ids]
     
