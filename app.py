@@ -1,6 +1,6 @@
 # app.py
 import dash
-from dash import dcc, html, dash_table, Input, Output, State, no_update, background_callback
+from dash import dcc, html, dash_table, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
 import pandas as pd
 import requests
@@ -68,6 +68,11 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
     listado_ids = listado_ids or []
     
     total_items = len(listado_nombres) + len(listado_ids)
+    if total_items == 0:
+        if progress_callback:
+            progress_callback((0, 0))
+        return pd.DataFrame()
+
     items_procesados = 0
 
     for nombre in listado_nombres:
@@ -140,7 +145,6 @@ app.layout = dbc.Container([
     
     html.Hr(),
 
-    # Contenedor para la barra de progreso (inicialmente oculto)
     html.Div(
         [
             html.P("Procesando... por favor, espera."),
@@ -150,10 +154,8 @@ app.layout = dbc.Container([
         style={"display": "none"},
     ),
 
-    # Contenedor para los resultados finales
     html.Div(id='output-resultados'),
 
-    # --- FOOTER ---
     html.Hr(className="my-5"),
     html.Div(
         dbc.Row([
@@ -186,18 +188,13 @@ def cargar_ejemplo(n_clicks):
     ejemplo_ids = "14389\n999999"
     return ejemplo_nombres, ejemplo_ids
 
-@background_callback(
-    [
-        Output('output-resultados', 'children'),
-        Output('store-resultados', 'data'),
-    ],
-    [
-        Input('btn-busqueda', 'n_clicks'),
-    ],
-    [
-        State('area-nombres', 'value'),
-        State('area-ids', 'value'),
-    ],
+# --- Callback principal con la sintaxis moderna para segundo plano ---
+@app.callback(
+    Output('output-resultados', 'children'),
+    Output('store-resultados', 'data'),
+    Input('btn-busqueda', 'n_clicks'),
+    State('area-nombres', 'value'),
+    State('area-ids', 'value'),
     running=[
         (Output('btn-busqueda', 'disabled'), True, False),
         (Output('progress-container', 'style'), {'display': 'block'}, {'display': 'none'}),
@@ -207,7 +204,8 @@ def cargar_ejemplo(n_clicks):
         Output('progress-bar', 'value'),
         Output('progress-bar', 'label')
     ],
-    prevent_initial_call=True,
+    background=True, # <--- Argumento clave para ejecutar en segundo plano
+    prevent_initial_call=True
 )
 def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     """Ejecuta la búsqueda en segundo plano y actualiza la barra de progreso."""
