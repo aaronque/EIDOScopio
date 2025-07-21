@@ -1,6 +1,6 @@
 # app.py
 import dash
-from dash import dcc, html, dash_table, Input, Output, State, no_update, running, background_callback
+from dash import dcc, html, dash_table, Input, Output, State, no_update, background_callback
 import dash_bootstrap_components as dbc
 import pandas as pd
 import requests
@@ -80,7 +80,6 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
         
         items_procesados += 1
         if progress_callback:
-            # Informa del progreso al callback principal
             progress_callback((items_procesados, total_items))
 
     for taxon_id in listado_ids:
@@ -93,7 +92,6 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
 
         items_procesados += 1
         if progress_callback:
-            # Informa del progreso al callback principal
             progress_callback((items_procesados, total_items))
 
     datos_para_tabla = resultados_exitosos + resultados_fallidos
@@ -149,7 +147,7 @@ app.layout = dbc.Container([
             dbc.Progress(id="progress-bar", value=0, striped=True, animated=True),
         ],
         id="progress-container",
-        style={"display": "none"}, # Oculto por defecto
+        style={"display": "none"},
     ),
 
     # Contenedor para los resultados finales
@@ -214,7 +212,7 @@ def cargar_ejemplo(n_clicks):
 def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     """Ejecuta la búsqueda en segundo plano y actualiza la barra de progreso."""
     if not nombres_texto and not ids_texto:
-        return dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), None
+        return dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), no_update
 
     lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
     lista_ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
@@ -222,7 +220,7 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=set_progress)
 
     if df_resultado.empty:
-        return dbc.Alert("La búsqueda no produjo resultados.", color="info"), None
+        return dbc.Alert("La búsqueda no produjo resultados.", color="info"), no_update
     
     total_consultados = len(lista_nombres) + len(lista_ids)
     encontrados = len(df_resultado[df_resultado['Error'] == '-'])
