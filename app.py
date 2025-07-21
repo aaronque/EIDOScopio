@@ -69,7 +69,7 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None):
     listado_ids = listado_ids or []
 
     for nombre in listado_nombres:
-        time.sleep(1)
+        #time.sleep(1)
         taxon_id = obtener_id_por_nombre(nombre)
         if taxon_id:
             datos_especie = obtener_datos_proteccion(taxon_id, nombre)
@@ -78,7 +78,7 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None):
             resultados_fallidos.append({"Especie": nombre, "Error": "ID de taxón no encontrado"})
 
     for taxon_id in listado_ids:
-        time.sleep(1)
+        #time.sleep(1)
         nombre_cientifico = obtener_nombre_por_id(taxon_id)
         if nombre_cientifico:
             datos_especie = obtener_datos_proteccion(taxon_id, nombre_cientifico)
