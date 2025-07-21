@@ -126,20 +126,28 @@ server = app.server
 # --- DEFINICIÓN DE LA BARRA LATERAL ---
 sidebar = html.Div(
     [
-        html.H2("EIDOScopio", className="display-5"),
-        html.H5("🔎 Buscador de Especies", className="text-muted"),
-        html.Hr(),
-        html.P(
-            "Una herramienta para consultar el estatus de protección de especies en la API del Inventario Español de Especies (EIDOS).",
-            className="lead"
-        ),
-        html.Hr(),
-        html.P("Creado por Aarón Quesada"),
+        # Contenedor para el contenido superior (título y descripción)
         html.Div([
-            html.A("LinkedIn", href="https://www.linkedin.com/in/aaronq/", target="_blank", className="ms-3"),
-            html.A("GitHub", href="https://github.com/aaronque", target="_blank", className="ms-3"),
-        ], className="d-flex justify-content-start"),
+            html.H2("EIDOScopio", className="display-5"),
+            html.H5("🔎 Buscador de Especies", className="text-muted"),
+            html.Hr(),
+            html.P(
+                "Una herramienta para consultar el estatus de protección de especies en la API del Inventario Español de Especies (EIDOS).",
+                className="lead"
+            ),
+        ]),
+        
+        # Contenedor para el contenido inferior (autoría), empujado hacia abajo
+        html.Div([
+            html.Hr(),
+            html.P("Desarrollado por Aarón Quesada"),
+            html.Div([
+                html.A("LinkedIn", href="https://www.linkedin.com/in/aaronq/", target="_blank", className="ms-3"),
+                html.A("GitHub", href="https://github.com/aaronque", target="_blank", className="ms-3"),
+            ], className="d-flex justify-content-start"),
+        ], style={"margin-top": "auto"}) # <-- ESTE ESTILO EMPUJA EL BLOQUE HACIA ABAJO
     ],
+    # --- ESTILOS DE LA BARRA LATERAL (CON FLEXBOX) ---
     style={
         "position": "fixed",
         "top": 0,
@@ -148,6 +156,8 @@ sidebar = html.Div(
         "width": "22rem",
         "padding": "2rem 1rem",
         "background-color": "#f8f9fa",
+        "display": "flex", # <-- Añadido
+        "flex-direction": "column" # <-- Añadido
     },
 )
 
