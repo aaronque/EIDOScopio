@@ -97,7 +97,7 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None):
     return df
     
 # --- Inicialización de la App Dash ---
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY]) # Tema oscuro como ejemplo
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP]) # Tema oscuro como ejemplo
 server = app.server
 
 # --- DEFINICIÓN DE COMPONENTES REUTILIZABLES ---
@@ -108,7 +108,7 @@ sidebar = html.Div(
         html.H2("EIDOScopio", className="display-4"),
         html.Hr(),
         html.P(
-            "Una herramienta para consultar el estatus de protección de especies en España.",
+            "Una herramienta para consultar el estatus de protección de especies silvestres en España.",
             className="lead"
         ),
         dbc.Alert(
