@@ -110,7 +110,6 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
     if 'Especie' in df.columns:
         cols = df.columns.tolist()
         cols.insert(0, cols.pop(cols.index('Especie')))
-        # Mueve la columna 'Error' al final si existe
         if 'Error' in cols:
             cols.append(cols.pop(cols.index('Error')))
         df = df.reindex(columns=cols)
@@ -138,7 +137,7 @@ sidebar = html.Div(
         ]),
         html.Div([
             html.Hr(),
-            html.P("Creado por Aarón Quesada"),
+            html.P("Desarrollado por Aarón Quesada"),
             html.Div([
                 html.A("LinkedIn", href="https://www.linkedin.com/in/aaronq/", target="_blank", className="ms-3"),
                 html.A("GitHub", href="https://github.com/aaronque", target="_blank", className="ms-3"),
@@ -165,7 +164,7 @@ content = html.Div(
             dbc.AccordionItem(
                 [
                     html.P("- Para búsquedas por nombre científico: Introduce un nombre por cada línea."),
-                    html.P("- Para búsquedas por ID de EIDOS: Escribe los números separados por espacios o saltos de línea."),
+                    html.P("- Para búsquedas por ID de EIDOS: Escribe los números separados por comas, espacios o saltos de línea."),
                     html.P("- Haz clic en 'Comenzar Búsqueda' para procesar los datos.")
                 ],
                 title="ℹ️ Ver instrucciones de uso",
@@ -176,7 +175,7 @@ content = html.Div(
 
         dbc.Row([
             dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nSus scrofa...", style={'width': '100%', 'height': 200})),
-            dbc.Col(dcc.Textarea(id='area-ids', placeholder="13431\n9322...", style={'width': '100%', 'height': 200})),
+            dbc.Col(dcc.Textarea(id='area-ids', placeholder="13431,9322, 14389...", style={'width': '100%', 'height': 200})),
         ]),
 
         dbc.Button("🔎 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
@@ -257,14 +256,15 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
             set_progress((items_procesados / total * 100, f"{items_procesados} / {total}"))
 
     lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
-    lista_ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
+    
+    # --- LÍNEA MODIFICADA PARA ACEPTAR COMAS ---
+    lista_ids = [int(id_num) for id_num in re.split(r'[\s,]+', ids_texto.strip()) if id_num.isdigit()]
 
     df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=progress_wrapper)
 
     if df_resultado.empty:
         return dbc.Alert("La búsqueda no produjo resultados.", color="info"), no_update
 
-    # --- LÓGICA DE RESUMEN CORREGIDA ---
     total_consultados = len(lista_nombres) + len(lista_ids)
     
     columnas_proteccion = [col for col in df_resultado.columns if 'Catálogo' in col or 'Convenio' in col]
