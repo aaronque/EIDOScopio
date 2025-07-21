@@ -100,7 +100,7 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None):
     return df
 
 # --- Inicialización de la App Dash ---
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.VAPOR])
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.DARKLY])
 server = app.server
 
 # --- LAYOUT DE LA APP ---
