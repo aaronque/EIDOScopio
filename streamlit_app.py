@@ -131,7 +131,7 @@ with st.expander("ℹ️ Ver instrucciones de uso"):
     """)
 
 # Botón de ejemplo
-EJEMPLO_NOMBRES = "Lynx pardinus\nUrsus arctos\nUna especie inventada"
+EJEMPLO_NOMBRES = "Lynx pardinus\nUrsus arctos\nGamusinus silvestris"
 EJEMPLO_IDS = "14389\n999999" # Aquila adalberti y un ID falso
 
 if 'nombres_key' not in st.session_state:
