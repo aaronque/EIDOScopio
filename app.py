@@ -141,7 +141,7 @@ app.layout = dbc.Container([
             dbc.Col(html.P("Creado por Aarón Quesada"), className="text-center text-md-start"),
             dbc.Col(
                 html.Div([
-                    html.A("LinkedIn", href="https://www.linkedin.com/in/aquesada/", target="_blank", className="ms-3"),
+                    html.A("LinkedIn", href="https://www.linkedin.com/in/aaronq/", target="_blank", className="ms-3"),
                     html.A("GitHub", href="https://github.com/aaronque", target="_blank", className="ms-3"),
                 ]),
                 className="text-center text-md-end"
