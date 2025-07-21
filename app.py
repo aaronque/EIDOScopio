@@ -164,8 +164,8 @@ def cargar_ejemplo(n_clicks):
 @app.callback(Output('store-tareas', 'data'), Output('store-resultados', 'data', allow_duplicate=True), Output('interval-proceso', 'disabled'), Output('output-zona-progreso', 'children'), Output('output-zona-resultados', 'children', allow_duplicate=True), Input('btn-busqueda', 'n_clicks'), State('area-nombres', 'value'), State('area-ids', 'value'), prevent_initial_call=True)
 def iniciar_busqueda(n_clicks, nombres_texto, ids_texto):
     if not nombres_texto and not ids_texto: return no_update, no_update, True, dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), None
-    nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
-    ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
+    nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()] if nombres_texto else []
+    ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()] if ids_texto else []
     tareas = [('nombre', n) for n in nombres] + [('id', i) for i in ids]
     if not tareas: return no_update, no_update, True, dbc.Alert("No hay datos válidos para buscar.", color="warning"), None
     layout_progreso = html.Div([html.P(id='texto-progreso', children=f"Procesando 0 de {len(tareas)}..."), dbc.Progress(id='barra-progreso', value=0, style={"height": "20px"})])
