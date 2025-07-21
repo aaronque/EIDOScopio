@@ -113,17 +113,15 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None):
     return df
 
 # --- Barra Lateral (Sidebar) ---
-st.sidebar.title("Acerca de Eidoscopio")
+st.sidebar.title("Acerca de EIDOScopio")
 st.sidebar.info(
     "Esta herramienta permite consultar el estatus de protección de especies en España "
     "a través de la API de la base de datos EIDOS del MITECO."
 )
-st.sidebar.success("Creado con Streamlit y Python.")
 st.sidebar.markdown("---")
-st.sidebar.markdown("Licencia MIT")
 
 # --- Interfaz Principal ---
-st.title("Eidoscopio: Visor de Especies Protegidas 🔎")
+st.title("EIDOScopio: 🔎 Buscador del Estatus Legal de Especies Silvestres en España")
 
 with st.expander("ℹ️ Ver instrucciones de uso"):
     st.markdown("""
