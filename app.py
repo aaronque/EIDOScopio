@@ -207,7 +207,6 @@ def cargar_ejemplo(n_clicks):
         (Output('output-resultados', 'style'), {'display': 'none'}, {'display': 'block'}),
     ],
     progress=[
-        # --- ESTA ES LA SINTAXIS CORREGIDA ---
         Output('progress-bar', 'value'),
         Output('progress-bar', 'label'),
     ],
@@ -216,13 +215,17 @@ def cargar_ejemplo(n_clicks):
 )
 def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     """Ejecuta la búsqueda en segundo plano y actualiza la barra de progreso."""
+    # --- CORRECCIÓN DE SEGURIDAD PARA EVITAR ERROR 'NONETYPE' ---
+    nombres_texto = nombres_texto or ""
+    ids_texto = ids_texto or ""
+
     if not nombres_texto and not ids_texto:
         return dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), no_update
 
     def progress_wrapper(progress_info):
         items_procesados, total = progress_info
-        # Actualiza la barra de progreso con el valor y la etiqueta
-        set_progress((items_procesados / total * 100, f"{items_procesados} / {total}"))
+        if total > 0:
+            set_progress((items_procesados / total * 100, f"{items_procesados} / {total}"))
 
     lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
     lista_ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
@@ -269,7 +272,8 @@ def descargar_excel(n_clicks, json_data):
     if json_data is None:
         return no_update
 
-    df = pd.read_json(json_data, orient='split')
+    # --- CORRECCIÓN PARA LA ADVERTENCIA DE PANDAS (FUTUREWARNING) ---
+    df = pd.read_json(io.StringIO(json_data), orient='split')
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.drop(columns=['protegido'], errors='ignore').to_excel(writer, index=False, sheet_name='ProteccionEspecies')
