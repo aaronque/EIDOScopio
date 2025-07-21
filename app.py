@@ -131,7 +131,7 @@ sidebar = html.Div(
             html.H5("🔎 Buscador de Especies", className="text-muted"),
             html.Hr(),
             html.P(
-                "Una herramienta para consultar el estatus de protección de especies en la API del Inventario Español de Especies (EIDOS).",
+                "Una herramienta interactiva para explorar de forma masiva el estatus legal de la biodiversidad española a través de la API de EIDOS.",
                 className="lead"
             ),
         ]),
