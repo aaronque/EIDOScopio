@@ -132,7 +132,7 @@ sidebar = html.Div(
             html.H5("🔎 Buscador de Especies", className="text-muted"),
             html.Hr(),
             html.P(
-                "Una herramienta para consultar el estatus de protección de especies en la API del Inventario Español de Especies (EIDOS).",
+                "Una herramienta para consultar el estatus de protección de especies silvestres en la API del Inventario de Especies Silvestres (EIDOS).",
                 className="lead"
             ),
         ]),
@@ -182,7 +182,7 @@ content = html.Div(
             dbc.Col(dcc.Textarea(id='area-ids', placeholder="13431\n9322...", style={'width': '100%', 'height': 200})),
         ]),
 
-        dbc.Button("🚀 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
+        dbc.Button("🔎 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
 
         html.Hr(),
 
