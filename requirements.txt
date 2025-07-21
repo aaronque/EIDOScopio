@@ -1,6 +1,6 @@
+dash[diskcache]>=2.9.0
+dash-bootstrap-components>=1.0.0
 pandas
 requests
 xlsxwriter
-dash>=2.9.0
-dash-bootstrap-components>=1.0.0
 gunicorn
