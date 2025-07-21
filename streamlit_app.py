@@ -102,7 +102,7 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None):
 
 # --- Interfaz de Streamlit ---
 st.set_page_config(page_title="Buscador de Especies", layout="wide")
-st.title("EIDOScopio 🔎 Buscador de Protección de Especies")
+st.title("EIDOScopio 🔎 Consulta de Estatus Legal de Especies Silvestres presentes en España")
 col1, col2 = st.columns(2)
 with col1:
     nombres_texto = st.text_area("**Nombres Científicos (uno por línea)**", height=250, placeholder="Achondrostoma arcasii\nSus scrofa...")
