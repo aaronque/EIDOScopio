@@ -6,11 +6,11 @@ import pandas as pd
 import requests
 import re
 import io
-import diskcache # <--- 1. Importar diskcache
+import diskcache
 
 # --- Configuración del Gestor para Callbacks en Segundo Plano ---
-cache = diskcache.Cache("./cache") # <--- 2. Crear un directorio de caché en el servidor
-background_callback_manager = dash.DiskcacheManager(cache) # <--- 3. Iniciar el gestor
+cache = diskcache.Cache("./cache")
+background_callback_manager = dash.DiskcacheManager(cache)
 
 # --- Lógica de Búsqueda (Sin cambios) ---
 API_BASE_URL = "https://iepnb.gob.es/api/especie"
@@ -71,14 +71,18 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
     resultados_fallidos = []
     listado_nombres = listado_nombres or []
     listado_ids = listado_ids or []
-    
+
     total_items = len(listado_nombres) + len(listado_ids)
     if total_items == 0:
-        if progress_callback:
-            progress_callback((0, 0))
         return pd.DataFrame()
 
     items_procesados = 0
+
+    def update_progress():
+        nonlocal items_procesados
+        items_procesados += 1
+        if progress_callback:
+            progress_callback((items_procesados, total_items))
 
     for nombre in listado_nombres:
         taxon_id = obtener_id_por_nombre(nombre)
@@ -87,10 +91,7 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
             resultados_exitosos.append(datos_especie)
         else:
             resultados_fallidos.append({"Especie": nombre, "Error": "ID de taxón no encontrado"})
-        
-        items_procesados += 1
-        if progress_callback:
-            progress_callback((items_procesados, total_items))
+        update_progress()
 
     for taxon_id in listado_ids:
         nombre_cientifico = obtener_nombre_por_id(taxon_id)
@@ -99,10 +100,7 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
             resultados_exitosos.append(datos_especie)
         else:
             resultados_fallidos.append({"Especie": f"ID: {taxon_id}", "Error": "Nombre científico no encontrado"})
-
-        items_procesados += 1
-        if progress_callback:
-            progress_callback((items_procesados, total_items))
+        update_progress()
 
     datos_para_tabla = resultados_exitosos + resultados_fallidos
     if not datos_para_tabla: return pd.DataFrame()
@@ -118,9 +116,8 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
     return df
 
 # --- Inicialización de la App Dash ---
-# <--- 4. Pasar el gestor a la app ---
 app = dash.Dash(
-    __name__, 
+    __name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
     background_callback_manager=background_callback_manager
 )
@@ -143,7 +140,7 @@ app.layout = dbc.Container([
             title="ℹ️ Ver instrucciones de uso",
         )
     ]),
-    
+
     dbc.Button("Cargar datos de ejemplo", id="btn-ejemplo", color="secondary", className="mt-3 mb-3"),
 
     dbc.Row([
@@ -152,7 +149,7 @@ app.layout = dbc.Container([
     ]),
 
     dbc.Button("🚀 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
-    
+
     html.Hr(),
 
     html.Div(
@@ -210,8 +207,9 @@ def cargar_ejemplo(n_clicks):
         (Output('output-resultados', 'style'), {'display': 'none'}, {'display': 'block'}),
     ],
     progress=[
-        (Output('progress-bar', 'value'), 'value'),
-        (Output('progress-bar', 'label'), 'children')
+        # --- ESTA ES LA SINTAXIS CORREGIDA ---
+        Output('progress-bar', 'value'),
+        Output('progress-bar', 'label'),
     ],
     background=True,
     prevent_initial_call=True
@@ -221,26 +219,25 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     if not nombres_texto and not ids_texto:
         return dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), no_update
 
-    lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
-    lista_ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
-    
-    total_items = len(lista_nombres) + len(lista_ids)
-
     def progress_wrapper(progress_info):
         items_procesados, total = progress_info
+        # Actualiza la barra de progreso con el valor y la etiqueta
         set_progress((items_procesados / total * 100, f"{items_procesados} / {total}"))
+
+    lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
+    lista_ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
 
     df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=progress_wrapper)
 
     if df_resultado.empty:
         return dbc.Alert("La búsqueda no produjo resultados.", color="info"), no_update
-    
+
     total_consultados = len(lista_nombres) + len(lista_ids)
     encontrados = len(df_resultado[df_resultado['Error'] == '-'])
     columnas_proteccion = [col for col in df_resultado.columns if 'Catálogo' in col or 'Convenio' in col]
     df_resultado['protegido'] = df_resultado[columnas_proteccion].ne('-').any(axis=1)
     protegidos = len(df_resultado[df_resultado['protegido'] & (df_resultado['Error'] == '-')])
-    
+
     layout_resultados = html.Div([
         html.H3("📊 Resumen de Resultados", className="mt-4"),
         dbc.Row([
@@ -258,7 +255,7 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
             page_size=10,
         )
     ])
-    
+
     return layout_resultados, df_resultado.to_json(date_format='iso', orient='split')
 
 @app.callback(
@@ -277,7 +274,7 @@ def descargar_excel(n_clicks, json_data):
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.drop(columns=['protegido'], errors='ignore').to_excel(writer, index=False, sheet_name='ProteccionEspecies')
     output.seek(0)
-    
+
     return dcc.send_bytes(output.getvalue(), "proteccion_especies.xlsx")
 
 # --- Ejecución del Servidor ---
