@@ -110,6 +110,7 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
     if 'Especie' in df.columns:
         cols = df.columns.tolist()
         cols.insert(0, cols.pop(cols.index('Especie')))
+        # Mueve la columna 'Error' al final si existe
         if 'Error' in cols:
             cols.append(cols.pop(cols.index('Error')))
         df = df.reindex(columns=cols)
@@ -126,28 +127,24 @@ server = app.server
 # --- DEFINICIÓN DE LA BARRA LATERAL ---
 sidebar = html.Div(
     [
-        # Contenedor para el contenido superior (título y descripción)
         html.Div([
             html.H2("EIDOScopio", className="display-5"),
             html.H5("🔎 Buscador de Especies", className="text-muted"),
             html.Hr(),
             html.P(
-                "Una herramienta para consultar el estatus de protección de especies silvestres en la API del Inventario de Especies Silvestres (EIDOS).",
+                "Una herramienta para consultar el estatus de protección de especies en la API del Inventario Español de Especies (EIDOS).",
                 className="lead"
             ),
         ]),
-        
-        # Contenedor para el contenido inferior (autoría), empujado hacia abajo
         html.Div([
             html.Hr(),
-            html.P("Desarrollado por Aarón Quesada"),
+            html.P("Creado por Aarón Quesada"),
             html.Div([
                 html.A("LinkedIn", href="https://www.linkedin.com/in/aaronq/", target="_blank", className="ms-3"),
                 html.A("GitHub", href="https://github.com/aaronque", target="_blank", className="ms-3"),
             ], className="d-flex justify-content-start"),
-        ], style={"margin-top": "auto"}) # <-- ESTE ESTILO EMPUJA EL BLOQUE HACIA ABAJO
+        ], style={"margin-top": "auto"})
     ],
-    # --- ESTILOS DE LA BARRA LATERAL (CON FLEXBOX) ---
     style={
         "position": "fixed",
         "top": 0,
@@ -156,8 +153,8 @@ sidebar = html.Div(
         "width": "22rem",
         "padding": "2rem 1rem",
         "background-color": "#f8f9fa",
-        "display": "flex", # <-- Añadido
-        "flex-direction": "column" # <-- Añadido
+        "display": "flex",
+        "flex-direction": "column"
     },
 )
 
@@ -182,7 +179,7 @@ content = html.Div(
             dbc.Col(dcc.Textarea(id='area-ids', placeholder="13431\n9322...", style={'width': '100%', 'height': 200})),
         ]),
 
-        dbc.Button("🔎 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
+        dbc.Button("🚀 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
 
         html.Hr(),
 
@@ -204,7 +201,6 @@ content = html.Div(
     }
 )
 
-
 # --- LAYOUT DE LA APP ---
 app.layout = html.Div(
     [
@@ -214,7 +210,6 @@ app.layout = html.Div(
         content
     ]
 )
-
 
 # --- CALLBACKS PARA LA INTERACTIVIDAD ---
 
@@ -269,11 +264,21 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     if df_resultado.empty:
         return dbc.Alert("La búsqueda no produjo resultados.", color="info"), no_update
 
+    # --- LÓGICA DE RESUMEN CORREGIDA ---
     total_consultados = len(lista_nombres) + len(lista_ids)
-    encontrados = len(df_resultado[df_resultado['Error'] == '-'])
+    
     columnas_proteccion = [col for col in df_resultado.columns if 'Catálogo' in col or 'Convenio' in col]
-    df_resultado['protegido'] = df_resultado[columnas_proteccion].ne('-').any(axis=1)
-    protegidos = len(df_resultado[df_resultado['protegido'] & (df_resultado['Error'] == '-')])
+    if columnas_proteccion:
+        df_resultado['protegido'] = df_resultado[columnas_proteccion].ne('-').any(axis=1)
+    else:
+        df_resultado['protegido'] = False
+
+    if 'Error' in df_resultado.columns:
+        encontrados = len(df_resultado[df_resultado['Error'] == '-'])
+        protegidos = len(df_resultado[df_resultado['protegido'] & (df_resultado['Error'] == '-')])
+    else:
+        encontrados = total_consultados
+        protegidos = len(df_resultado[df_resultado['protegido']])
 
     layout_resultados = html.Div([
         html.H3("📊 Resumen de Resultados", className="mt-4"),
@@ -286,7 +291,7 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
         dbc.Button("📥 Descargar Tabla como Excel", id="btn-descarga", color="success", className="mt-3 mb-3 w-100"),
         dash_table.DataTable(
             id='tabla-resultados',
-            columns=[{"name": i, "id": i} for i in df_resultado.drop(columns=['protegido']).columns],
+            columns=[{"name": i, "id": i} for i in df_resultado.drop(columns=['protegido'], errors='ignore').columns],
             data=df_resultado.to_dict('records'),
             style_table={'overflowX': 'auto'},
             page_size=10,
