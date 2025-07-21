@@ -113,8 +113,8 @@ app.layout = dbc.Container([
     dbc.Accordion([
         dbc.AccordionItem(
             [
-                html.P("- Para Nombres Científicos: Introduce un nombre por cada línea."),
-                html.P("- Para IDs de Taxón: Escribe los números separados por espacios o saltos de línea."),
+                html.P("- Para búsquedas por nombre científico: Introduce un nombre por cada línea."),
+                html.P("- Para búsquedas por ID de EIDOS: Escribe los números separados por espacios o saltos de línea."),
                 html.P("- Haz clic en 'Comenzar Búsqueda' para procesar los datos.")
             ],
             title="ℹ️ Ver instrucciones de uso",
