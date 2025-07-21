@@ -123,62 +123,87 @@ app = dash.Dash(
 )
 server = app.server
 
-# --- LAYOUT DE LA APP ---
-app.layout = dbc.Container([
-    dcc.Store(id='store-resultados'),
-    dcc.Download(id='download-excel'),
+# --- DEFINICIÓN DE LA BARRA LATERAL ---
+sidebar = html.Div(
+    [
+        html.H2("EIDOScopio", className="display-5"),
+        html.H5("🔎 Buscador de Especies", className="text-muted"),
+        html.Hr(),
+        html.P(
+            "Una herramienta para consultar el estatus de protección de especies en la API del Inventario Español de Especies (EIDOS).",
+            className="lead"
+        ),
+        html.Hr(),
+        html.P("Creado por Aarón Quesada"),
+        html.Div([
+            html.A("LinkedIn", href="https://www.linkedin.com/in/aaronq/", target="_blank", className="ms-3"),
+            html.A("GitHub", href="https://github.com/aaronque", target="_blank", className="ms-3"),
+        ], className="d-flex justify-content-start"),
+    ],
+    style={
+        "position": "fixed",
+        "top": 0,
+        "left": 0,
+        "bottom": 0,
+        "width": "22rem",
+        "padding": "2rem 1rem",
+        "background-color": "#f8f9fa",
+    },
+)
 
-    html.H1("EIDOScopio: 🔎 Buscador del Estatus Legal de Especies", className="my-4 text-center"),
-
-    dbc.Accordion([
-        dbc.AccordionItem(
-            [
-                html.P("- Para búsquedas por nombre científico: Introduce un nombre por cada línea."),
-                html.P("- Para búsquedas por ID de EIDOS: Escribe los números separados por espacios o saltos de línea."),
-                html.P("- Haz clic en 'Comenzar Búsqueda' para procesar los datos.")
-            ],
-            title="ℹ️ Ver instrucciones de uso",
-        )
-    ]),
-
-    dbc.Button("Cargar datos de ejemplo", id="btn-ejemplo", color="secondary", className="mt-3 mb-3"),
-
-    dbc.Row([
-        dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nSus scrofa...", style={'width': '100%', 'height': 200})),
-        dbc.Col(dcc.Textarea(id='area-ids', placeholder="13431\n9322...", style={'width': '100%', 'height': 200})),
-    ]),
-
-    dbc.Button("🚀 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
-
-    html.Hr(),
-
-    html.Div(
-        [
-            html.P("Procesando... por favor, espera."),
-            dbc.Progress(id="progress-bar", value=0, striped=True, animated=True),
-        ],
-        id="progress-container",
-        style={"display": "none"},
-    ),
-
-    html.Div(id='output-resultados'),
-
-    html.Hr(className="my-5"),
-    html.Div(
-        dbc.Row([
-            dbc.Col(html.P("Creado por Aarón Quesada"), className="text-center text-md-start"),
-            dbc.Col(
-                html.Div([
-                    html.A("LinkedIn", href="https://www.linkedin.com/in/aaronq/", target="_blank", className="ms-3"),
-                    html.A("GitHub", href="https://github.com/aaronque", target="_blank", className="ms-3"),
-                ]),
-                className="text-center text-md-end"
+# --- DEFINICIÓN DEL CONTENIDO PRINCIPAL ---
+content = html.Div(
+    [
+        dbc.Accordion([
+            dbc.AccordionItem(
+                [
+                    html.P("- Para búsquedas por nombre científico: Introduce un nombre por cada línea."),
+                    html.P("- Para búsquedas por ID de EIDOS: Escribe los números separados por espacios o saltos de línea."),
+                    html.P("- Haz clic en 'Comenzar Búsqueda' para procesar los datos.")
+                ],
+                title="ℹ️ Ver instrucciones de uso",
             )
         ]),
-        className="text-muted"
-    )
 
-], fluid=True, className="mb-5")
+        dbc.Button("Cargar datos de ejemplo", id="btn-ejemplo", color="secondary", className="mt-3 mb-3"),
+
+        dbc.Row([
+            dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nSus scrofa...", style={'width': '100%', 'height': 200})),
+            dbc.Col(dcc.Textarea(id='area-ids', placeholder="13431\n9322...", style={'width': '100%', 'height': 200})),
+        ]),
+
+        dbc.Button("🚀 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
+
+        html.Hr(),
+
+        html.Div(
+            [
+                html.P("Procesando... por favor, espera."),
+                dbc.Progress(id="progress-bar", value=0, striped=True, animated=True),
+            ],
+            id="progress-container",
+            style={"display": "none"},
+        ),
+
+        html.Div(id='output-resultados'),
+    ],
+    style={
+        "margin-left": "24rem",
+        "margin-right": "2rem",
+        "padding": "2rem 1rem",
+    }
+)
+
+
+# --- LAYOUT DE LA APP ---
+app.layout = html.Div(
+    [
+        dcc.Store(id='store-resultados'),
+        dcc.Download(id='download-excel'),
+        sidebar,
+        content
+    ]
+)
 
 
 # --- CALLBACKS PARA LA INTERACTIVIDAD ---
@@ -215,7 +240,6 @@ def cargar_ejemplo(n_clicks):
 )
 def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     """Ejecuta la búsqueda en segundo plano y actualiza la barra de progreso."""
-    # --- CORRECCIÓN DE SEGURIDAD PARA EVITAR ERROR 'NONETYPE' ---
     nombres_texto = nombres_texto or ""
     ids_texto = ids_texto or ""
 
@@ -272,7 +296,6 @@ def descargar_excel(n_clicks, json_data):
     if json_data is None:
         return no_update
 
-    # --- CORRECCIÓN PARA LA ADVERTENCIA DE PANDAS (FUTUREWARNING) ---
     df = pd.read_json(io.StringIO(json_data), orient='split')
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
