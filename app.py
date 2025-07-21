@@ -6,8 +6,13 @@ import pandas as pd
 import requests
 import re
 import io
+import diskcache # <--- 1. Importar diskcache
 
-# --- Lógica de Búsqueda (Tus funciones originales) ---
+# --- Configuración del Gestor para Callbacks en Segundo Plano ---
+cache = diskcache.Cache("./cache") # <--- 2. Crear un directorio de caché en el servidor
+background_callback_manager = dash.DiskcacheManager(cache) # <--- 3. Iniciar el gestor
+
+# --- Lógica de Búsqueda (Sin cambios) ---
 API_BASE_URL = "https://iepnb.gob.es/api/especie"
 
 def obtener_id_por_nombre(nombre_cientifico):
@@ -113,7 +118,12 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
     return df
 
 # --- Inicialización de la App Dash ---
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+# <--- 4. Pasar el gestor a la app ---
+app = dash.Dash(
+    __name__, 
+    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    background_callback_manager=background_callback_manager
+)
 server = app.server
 
 # --- LAYOUT DE LA APP ---
@@ -188,7 +198,6 @@ def cargar_ejemplo(n_clicks):
     ejemplo_ids = "14389\n999999"
     return ejemplo_nombres, ejemplo_ids
 
-# --- Callback principal con la sintaxis moderna para segundo plano ---
 @app.callback(
     Output('output-resultados', 'children'),
     Output('store-resultados', 'data'),
@@ -201,10 +210,10 @@ def cargar_ejemplo(n_clicks):
         (Output('output-resultados', 'style'), {'display': 'none'}, {'display': 'block'}),
     ],
     progress=[
-        Output('progress-bar', 'value'),
-        Output('progress-bar', 'label')
+        (Output('progress-bar', 'value'), 'value'),
+        (Output('progress-bar', 'label'), 'children')
     ],
-    background=True, # <--- Argumento clave para ejecutar en segundo plano
+    background=True,
     prevent_initial_call=True
 )
 def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
@@ -215,7 +224,13 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
     lista_ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
     
-    df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=set_progress)
+    total_items = len(lista_nombres) + len(lista_ids)
+
+    def progress_wrapper(progress_info):
+        items_procesados, total = progress_info
+        set_progress((items_procesados / total * 100, f"{items_procesados} / {total}"))
+
+    df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=progress_wrapper)
 
     if df_resultado.empty:
         return dbc.Alert("La búsqueda no produjo resultados.", color="info"), no_update
