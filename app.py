@@ -1,14 +1,13 @@
 # app.py
 import dash
-from dash import dcc, html, dash_table, Input, Output, State, no_update, callback_context, running, background_callback
+from dash import dcc, html, dash_table, Input, Output, State, no_update, running, background_callback
 import dash_bootstrap_components as dbc
 import pandas as pd
 import requests
-import time
 import re
 import io
 
-# --- Lógica de Búsqueda (Tus funciones originales, sin cambios) ---
+# --- Lógica de Búsqueda (Tus funciones originales) ---
 API_BASE_URL = "https://iepnb.gob.es/api/especie"
 
 def obtener_id_por_nombre(nombre_cientifico):
@@ -72,7 +71,6 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
     items_procesados = 0
 
     for nombre in listado_nombres:
-        # time.sleep(1) # Pausa ya eliminada
         taxon_id = obtener_id_por_nombre(nombre)
         if taxon_id:
             datos_especie = obtener_datos_proteccion(taxon_id, nombre)
@@ -86,7 +84,6 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
             progress_callback((items_procesados, total_items))
 
     for taxon_id in listado_ids:
-        # time.sleep(1) # Pausa ya eliminada
         nombre_cientifico = obtener_nombre_por_id(taxon_id)
         if nombre_cientifico:
             datos_especie = obtener_datos_proteccion(taxon_id, nombre_cientifico)
@@ -145,18 +142,19 @@ app.layout = dbc.Container([
     
     html.Hr(),
 
-# Contenedor para la barra de progreso (inicialmente oculto)
-html.Div(
-    [
-        html.P("Procesando... por favor, espera.", id="progress-label"),
-        dbc.Progress(id="progress-bar", value=0, striped=True, animated=True),
-    ],
-    id="progress-container",
-    style={"display": "none"}, # Oculto por defecto
-),
+    # Contenedor para la barra de progreso (inicialmente oculto)
+    html.Div(
+        [
+            html.P("Procesando... por favor, espera."),
+            dbc.Progress(id="progress-bar", value=0, striped=True, animated=True),
+        ],
+        id="progress-container",
+        style={"display": "none"}, # Oculto por defecto
+    ),
 
-# Contenedor para los resultados finales
-html.Div(id='output-resultados'),
+    # Contenedor para los resultados finales
+    html.Div(id='output-resultados'),
+
     # --- FOOTER ---
     html.Hr(className="my-5"),
     html.Div(
@@ -185,6 +183,7 @@ html.Div(id='output-resultados'),
     prevent_initial_call=True
 )
 def cargar_ejemplo(n_clicks):
+    """Carga datos de ejemplo en las áreas de texto."""
     ejemplo_nombres = "Lynx pardinus\nUrsus arctos\nGamusinus alipendis"
     ejemplo_ids = "14389\n999999"
     return ejemplo_nombres, ejemplo_ids
@@ -193,11 +192,6 @@ def cargar_ejemplo(n_clicks):
     [
         Output('output-resultados', 'children'),
         Output('store-resultados', 'data'),
-        Output('progress-bar', 'value'),
-        Output('progress-bar', 'label'),
-        Output('progress-container', 'style'),
-        Output('btn-busqueda', 'disabled'),
-        Output('output-resultados', 'style')
     ],
     [
         Input('btn-busqueda', 'n_clicks'),
@@ -208,8 +202,8 @@ def cargar_ejemplo(n_clicks):
     ],
     running=[
         (Output('btn-busqueda', 'disabled'), True, False),
-        (Output('progress-container'), {'display': 'block'}, {'display': 'none'}),
-        (Output('output-resultados'), {'display': 'none'}, {'display': 'block'}),
+        (Output('progress-container', 'style'), {'display': 'block'}, {'display': 'none'}),
+        (Output('output-resultados', 'style'), {'display': 'none'}, {'display': 'block'}),
     ],
     progress=[
         Output('progress-bar', 'value'),
@@ -218,20 +212,18 @@ def cargar_ejemplo(n_clicks):
     prevent_initial_call=True,
 )
 def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
+    """Ejecuta la búsqueda en segundo plano y actualiza la barra de progreso."""
     if not nombres_texto and not ids_texto:
-        # Devuelve el estado final para todos los Outputs
-        return dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), None, 0, "", {'display': 'none'}, False, {'display': 'block'}
+        return dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), None
 
     lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
     lista_ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
     
-    # Llama a la lógica de búsqueda pasándole la función 'set_progress'
     df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=set_progress)
 
     if df_resultado.empty:
-        return dbc.Alert("La búsqueda no produjo resultados.", color="info"), None, 0, "", {'display': 'none'}, False, {'display': 'block'}
+        return dbc.Alert("La búsqueda no produjo resultados.", color="info"), None
     
-    # --- Lógica de resumen (igual que antes) ---
     total_consultados = len(lista_nombres) + len(lista_ids)
     encontrados = len(df_resultado[df_resultado['Error'] == '-'])
     columnas_proteccion = [col for col in df_resultado.columns if 'Catálogo' in col or 'Convenio' in col]
@@ -256,8 +248,7 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
         )
     ])
     
-    # Devuelve el estado final para todos los Outputs
-    return layout_resultados, df_resultado.to_json(date_format='iso', orient='split'), 100, "Completado", {'display': 'block'}, False, {'display': 'block'}
+    return layout_resultados, df_resultado.to_json(date_format='iso', orient='split')
 
 @app.callback(
     Output('download-excel', 'data'),
@@ -266,6 +257,7 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     prevent_initial_call=True
 )
 def descargar_excel(n_clicks, json_data):
+    """Prepara y envía el archivo Excel para su descarga."""
     if json_data is None:
         return no_update
 
