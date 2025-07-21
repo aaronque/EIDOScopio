@@ -1,6 +1,6 @@
 # app.py
 import dash
-from dash import dcc, html, dash_table, Input, Output, State, no_update
+from dash import dcc, html, dash_table, Input, Output, State, no_update, callback_context, running, background_callback
 import dash_bootstrap_components as dbc
 import pandas as pd
 import requests
@@ -61,30 +61,43 @@ def obtener_datos_proteccion(taxon_id, nombre_cientifico_base):
         protecciones['Error'] = 'Fallo al obtener datos legales'
         return protecciones
 
-def generar_tabla_completa(listado_nombres=None, listado_ids=None):
-    """Orquesta la búsqueda y genera el DataFrame."""
+def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_callback=None):
+    """Orquesta la búsqueda y genera el DataFrame, actualizando el progreso."""
     resultados_exitosos = []
     resultados_fallidos = []
     listado_nombres = listado_nombres or []
     listado_ids = listado_ids or []
+    
+    total_items = len(listado_nombres) + len(listado_ids)
+    items_procesados = 0
 
     for nombre in listado_nombres:
-        #time.sleep(1)
+        # time.sleep(1) # Pausa ya eliminada
         taxon_id = obtener_id_por_nombre(nombre)
         if taxon_id:
             datos_especie = obtener_datos_proteccion(taxon_id, nombre)
             resultados_exitosos.append(datos_especie)
         else:
             resultados_fallidos.append({"Especie": nombre, "Error": "ID de taxón no encontrado"})
+        
+        items_procesados += 1
+        if progress_callback:
+            # Informa del progreso al callback principal
+            progress_callback((items_procesados, total_items))
 
     for taxon_id in listado_ids:
-        #time.sleep(1)
+        # time.sleep(1) # Pausa ya eliminada
         nombre_cientifico = obtener_nombre_por_id(taxon_id)
         if nombre_cientifico:
             datos_especie = obtener_datos_proteccion(taxon_id, nombre_cientifico)
             resultados_exitosos.append(datos_especie)
         else:
             resultados_fallidos.append({"Especie": f"ID: {taxon_id}", "Error": "Nombre científico no encontrado"})
+
+        items_procesados += 1
+        if progress_callback:
+            # Informa del progreso al callback principal
+            progress_callback((items_procesados, total_items))
 
     datos_para_tabla = resultados_exitosos + resultados_fallidos
     if not datos_para_tabla: return pd.DataFrame()
@@ -132,8 +145,18 @@ app.layout = dbc.Container([
     
     html.Hr(),
 
-    dcc.Loading(id="loading-icon", children=[html.Div(id='output-resultados')], type="default"),
+# Contenedor para la barra de progreso (inicialmente oculto)
+html.Div(
+    [
+        html.P("Procesando... por favor, espera.", id="progress-label"),
+        dbc.Progress(id="progress-bar", value=0, striped=True, animated=True),
+    ],
+    id="progress-container",
+    style={"display": "none"}, # Oculto por defecto
+),
 
+# Contenedor para los resultados finales
+html.Div(id='output-resultados'),
     # --- FOOTER ---
     html.Hr(className="my-5"),
     html.Div(
@@ -166,26 +189,49 @@ def cargar_ejemplo(n_clicks):
     ejemplo_ids = "14389\n999999"
     return ejemplo_nombres, ejemplo_ids
 
-@app.callback(
-    Output('output-resultados', 'children'),
-    Output('store-resultados', 'data'),
-    Input('btn-busqueda', 'n_clicks'),
-    State('area-nombres', 'value'),
-    State('area-ids', 'value'),
-    prevent_initial_call=True
+@background_callback(
+    [
+        Output('output-resultados', 'children'),
+        Output('store-resultados', 'data'),
+        Output('progress-bar', 'value'),
+        Output('progress-bar', 'label'),
+        Output('progress-container', 'style'),
+        Output('btn-busqueda', 'disabled'),
+        Output('output-resultados', 'style')
+    ],
+    [
+        Input('btn-busqueda', 'n_clicks'),
+    ],
+    [
+        State('area-nombres', 'value'),
+        State('area-ids', 'value'),
+    ],
+    running=[
+        (Output('btn-busqueda', 'disabled'), True, False),
+        (Output('progress-container'), {'display': 'block'}, {'display': 'none'}),
+        (Output('output-resultados'), {'display': 'none'}, {'display': 'block'}),
+    ],
+    progress=[
+        Output('progress-bar', 'value'),
+        Output('progress-bar', 'label')
+    ],
+    prevent_initial_call=True,
 )
-def ejecutar_busqueda(n_clicks, nombres_texto, ids_texto):
+def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     if not nombres_texto and not ids_texto:
-        return dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), None
+        # Devuelve el estado final para todos los Outputs
+        return dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), None, 0, "", {'display': 'none'}, False, {'display': 'block'}
 
     lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
     lista_ids = [int(id_num) for id_num in re.split(r'\s+', ids_texto.strip()) if id_num.isdigit()]
     
-    df_resultado = generar_tabla_completa(lista_nombres, lista_ids)
+    # Llama a la lógica de búsqueda pasándole la función 'set_progress'
+    df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=set_progress)
 
     if df_resultado.empty:
-        return dbc.Alert("La búsqueda no produjo resultados.", color="info"), None
+        return dbc.Alert("La búsqueda no produjo resultados.", color="info"), None, 0, "", {'display': 'none'}, False, {'display': 'block'}
     
+    # --- Lógica de resumen (igual que antes) ---
     total_consultados = len(lista_nombres) + len(lista_ids)
     encontrados = len(df_resultado[df_resultado['Error'] == '-'])
     columnas_proteccion = [col for col in df_resultado.columns if 'Catálogo' in col or 'Convenio' in col]
@@ -210,7 +256,8 @@ def ejecutar_busqueda(n_clicks, nombres_texto, ids_texto):
         )
     ])
     
-    return layout_resultados, df_resultado.to_json(date_format='iso', orient='split')
+    # Devuelve el estado final para todos los Outputs
+    return layout_resultados, df_resultado.to_json(date_format='iso', orient='split'), 100, "Completado", {'display': 'block'}, False, {'display': 'block'}
 
 @app.callback(
     Output('download-excel', 'data'),
