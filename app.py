@@ -135,15 +135,7 @@ sidebar = html.Div(
                 className="lead"
             ),
         ]),
-        html.Div([
-            html.Hr(),
-            html.P("Desarrollado por Aarón Quesada"),
-            html.Div([
-                html.A("LinkedIn", href="https://www.linkedin.com/in/aaronq/", target="_blank", className="ms-3"),
-                html.A("GitHub", href="https://github.com/aaronque", target="_blank", className="ms-3"),
-            ], className="d-flex justify-content-start"),
-        ], style={"margin-top": "auto"})
-    ],
+       ],
     style={
         "position": "fixed",
         "top": 0,
