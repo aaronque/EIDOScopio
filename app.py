@@ -155,7 +155,7 @@ content = html.Div(
         dbc.Accordion([
             dbc.AccordionItem(
                 [
-                    html.P("- Para búsquedas por nombre científico: Introduce un nombre por cada línea."),
+                    html.P("- Para búsquedas por nombre científico: Introduce un nombre por línea o sepáralos por comas."),
                     html.P("- Para búsquedas por ID de EIDOS: Escribe los números separados por comas, espacios o saltos de línea."),
                     html.P("- Haz clic en 'Comenzar Búsqueda' para procesar los datos.")
                 ],
@@ -247,7 +247,7 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
         if total > 0:
             set_progress((items_procesados / total * 100, f"{items_procesados} / {total}"))
 
-    lista_nombres = [line.strip() for line in nombres_texto.strip().split('\n') if line.strip()]
+    lista_nombres = [item.strip() for item in re.split(r'[\n,]+', nombres_texto.strip()) if item.strip()]
     
     # --- LÍNEA MODIFICADA PARA ACEPTAR COMAS ---
     lista_ids = [int(id_num) for id_num in re.split(r'[\s,]+', ids_texto.strip()) if id_num.isdigit()]
