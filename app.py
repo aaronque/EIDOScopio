@@ -1,34 +1,80 @@
-# app.py
+# app.py (final con background=True, filtros PostgREST, robustez y progreso)
+# Nota de despliegue: usa `gunicorn app:server` (no `app:app`).
+
+import os
+import io
+import re
+import time
+from threading import Lock
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import dash
 from dash import dcc, html, dash_table, Input, Output, State, no_update
 import dash_bootstrap_components as dbc
 import pandas as pd
 import requests
-import re
-import io
 import diskcache
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-# --- Configuración del Gestor para Callbacks en Segundo Plano ---
-cache = diskcache.Cache("./cache")
-background_callback_manager = dash.DiskcacheManager(cache)
-
-# --- Lógica de Búsqueda ---
+# ============================
+# Configuración general
+# ============================
 API_BASE_URL = "https://iepnb.gob.es/api/especie"
 
-# --- Utilidades HTTP (timeouts y manejo básico de errores) ---
-def _get_json(endpoint, params):
+# Ruta de cache segura por defecto en PaaS
+cache_dir = os.getenv("CACHE_DIR", "/tmp/eidos-cache")
+os.makedirs(cache_dir, exist_ok=True)
+cache = diskcache.Cache(cache_dir)
+background_callback_manager = dash.DiskcacheManager(cache)
+
+# Sesión HTTP robusta (reintentos y backoff)
+_session = requests.Session()
+_retry = Retry(
+    total=3,
+    backoff_factor=0.5,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"],
+)
+_adapter = HTTPAdapter(max_retries=_retry)
+_session.mount("http://", _adapter)
+_session.mount("https://", _adapter)
+
+# Throttle: máx. 4 req/s (configurable con EIDOS_RATE)
+_RATE = float(os.getenv("EIDOS_RATE", "4"))
+_MIN_INTERVAL = 1.0 / _RATE if _RATE > 0 else 0
+_last_call = 0.0
+_lock = Lock()
+
+BASE_COLS = {"Especie", "Grupo taxonómico", "Nombre común", "Error", "protegido"}
+
+# ============================
+# Utilidades HTTP
+# ============================
+def _get_json(endpoint: str, params: dict):
+    """GET con sesión, timeouts, retries y throttle básico."""
+    global _last_call
     try:
-        r = requests.get(f"{API_BASE_URL}{endpoint}", params=params, timeout=(5, 15))
+        with _lock:
+            now = time.time()
+            wait = (_MIN_INTERVAL - (now - _last_call))
+            if wait > 0:
+                time.sleep(wait)
+            _last_call = time.time()
+        r = _session.get(f"{API_BASE_URL}{endpoint}", params=params, timeout=(5, 15))
         r.raise_for_status()
         return r.json() or []
     except requests.exceptions.RequestException:
         return []
 
-# --- Funciones API documentadas ---
-def obtener_id_por_nombre(nombre_cientifico):
-    """Busca el ID de taxón para un nombre científico (RPC documentado)."""
+# ============================
+# Funciones API documentadas
+# ============================
+def obtener_id_por_nombre(nombre_cientifico: str):
+    """Busca el ID de taxón para un nombre científico (RPC)."""
     try:
-        r = requests.get(
+        r = _session.get(
             f"{API_BASE_URL}/rpc/obtenertaxonespornombre",
             params={"_nombretaxon": nombre_cientifico},
             timeout=(5, 15),
@@ -37,18 +83,20 @@ def obtener_id_por_nombre(nombre_cientifico):
         datos = r.json() or []
         if not datos:
             return None
+        # Normalización flexible de 'Aceptado/válido'
         for registro in datos:
-            # Conservamos la lógica original de aceptar el 'válido'
-            if registro.get("nametype") == "Aceptado/válido":
+            nt = (registro.get("nametype") or "").strip().lower()
+            if "aceptado" in nt or "valido" in nt or "válido" in nt:
                 return registro.get("taxonid")
-        return None
+        # Fallback: primer registro
+        return datos[0].get("taxonid") if datos else None
     except requests.exceptions.RequestException:
         return None
 
-def obtener_nombre_por_id(taxon_id):
-    """Busca el nombre científico aceptado para un ID de taxón (RPC documentado)."""
+def obtener_nombre_por_id(taxon_id: int):
+    """Nombre científico aceptado para un ID de taxón (RPC)."""
     try:
-        r = requests.get(
+        r = _session.get(
             f"{API_BASE_URL}/rpc/obtenertaxonporid",
             params={"_idtaxon": taxon_id},
             timeout=(5, 15),
@@ -61,11 +109,12 @@ def obtener_nombre_por_id(taxon_id):
     except requests.exceptions.RequestException:
         return None
 
-def obtener_datos_proteccion(taxon_id, nombre_cientifico_base):
-    """Obtiene y procesa los datos de protección para un único taxón ID (RPC documentado)."""
+def obtener_datos_proteccion(taxon_id: int, nombre_cientifico_base: str):
+    """Estados legales vigentes agrupados por columna (usa sets, sin duplicados)."""
     protecciones = {"Especie": nombre_cientifico_base}
+    estados_por_col = defaultdict(set)
     try:
-        r = requests.get(
+        r = _session.get(
             f"{API_BASE_URL}/rpc/obtenerestadoslegalesportaxonid",
             params={"_idtaxon": taxon_id},
             timeout=(5, 15),
@@ -77,41 +126,32 @@ def obtener_datos_proteccion(taxon_id, nombre_cientifico_base):
                 continue
             ambito = item.get("ambito")
             estado = item.get("estadolegal")
-            columna = ""
+            if not estado:
+                continue
             if ambito == "Nacional":
                 columna = item.get("dataset", "Catálogo Nacional")
             elif ambito == "Autonómico":
                 columna = f"Catálogo - {item.get('ccaa', 'Desconocida')}"
             elif ambito == "Internacional":
                 columna = item.get("dataset", "Convenio Internacional")
+            else:
+                columna = None
             if columna:
-                if columna in protecciones and protecciones[columna] != '-':
-                    # Evita duplicar textos de estado por subcadenas
-                    existentes = {e.strip() for e in str(protecciones[columna]).split(',')}
-                    if estado not in existentes:
-                        protecciones[columna] = ", ".join(list(existentes | {estado}))
-                else:
-                    protecciones[columna] = estado
+                estados_por_col[columna].add(estado)
+        for col, estados in estados_por_col.items():
+            protecciones[col] = ", ".join(sorted(estados)) if estados else "-"
         return protecciones
     except requests.exceptions.RequestException:
         protecciones["Error"] = "Fallo al obtener datos legales"
         return protecciones
 
-# --- NUEVAS funciones: Grupo taxonómico y Nombre común ---
-def obtener_grupo_taxonomico_por_id(taxon_id):
-    """
-    Devuelve el valor de 'taxonomicgroup' (texto) desde /v_taxonomia filtrando por taxonid.
-    Si hay varias filas, toma el primer valor no vacío.
-    """
+# --- Grupo taxonómico y Nombre común (vistas con PostgREST) ---
+def obtener_grupo_taxonomico_por_id(taxon_id: int):
     filas = _get_json("/v_taxonomia", {"taxonid": f"eq.{taxon_id}"})
     grupos = [f.get("taxonomicgroup") for f in filas if f.get("taxonomicgroup")]
     return grupos[0] if grupos else None
 
-def obtener_nombre_comun_por_id(taxon_id):
-    """
-    Devuelve un nombre común desde /v_nombrescomunes priorizando castellano (ididioma=1)
-    y espreferente=True si existiera. Si no, cualquier castellano; si no, el primero disponible.
-    """
+def obtener_nombre_comun_por_id(taxon_id: int):
     filas = _get_json("/v_nombrescomunes", {"idtaxon": f"eq.{taxon_id}"})
     if not filas:
         return None
@@ -123,7 +163,28 @@ def obtener_nombre_comun_por_id(taxon_id):
         return es_castellano[0].get("nombre_comun") or None
     return filas[0].get("nombre_comun") or None
 
-# --- Orquestación: genera DataFrame con progreso ---
+# ============================
+# Lógica de orquestación
+# ============================
+
+def _proc_nombre(nombre: str):
+    taxon_id = obtener_id_por_nombre(nombre)
+    if not taxon_id:
+        return {"Especie": nombre, "Grupo taxonómico": "-", "Nombre común": "-", "Error": "ID de taxón no encontrado"}
+    datos = obtener_datos_proteccion(taxon_id, nombre)
+    datos["Grupo taxonómico"] = obtener_grupo_taxonomico_por_id(taxon_id) or "-"
+    datos["Nombre común"] = obtener_nombre_comun_por_id(taxon_id) or "-"
+    return datos
+
+def _proc_id(taxon_id: int):
+    nombre = obtener_nombre_por_id(taxon_id)
+    if not nombre:
+        return {"Especie": f"ID: {taxon_id}", "Grupo taxonómico": "-", "Nombre común": "-", "Error": "Nombre científico no encontrado"}
+    datos = obtener_datos_proteccion(taxon_id, nombre)
+    datos["Grupo taxonómico"] = obtener_grupo_taxonomico_por_id(taxon_id) or "-"
+    datos["Nombre común"] = obtener_nombre_comun_por_id(taxon_id) or "-"
+    return datos
+
 def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_callback=None):
     resultados_exitosos = []
     resultados_fallidos = []
@@ -142,43 +203,18 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
         if progress_callback:
             progress_callback((items_procesados, total_items))
 
-    # Bucle por nombres científicos
-    for nombre in listado_nombres:
-        taxon_id = obtener_id_por_nombre(nombre)
-        if taxon_id:
-            datos_especie = obtener_datos_proteccion(taxon_id, nombre)
-            grupo = obtener_grupo_taxonomico_por_id(taxon_id)
-            comun = obtener_nombre_comun_por_id(taxon_id)
-            datos_especie["Grupo taxonómico"] = grupo if grupo else "-"
-            datos_especie["Nombre común"] = comun if comun else "-"
-            resultados_exitosos.append(datos_especie)
-        else:
-            resultados_fallidos.append({
-                "Especie": nombre,
-                "Grupo taxonómico": "-",
-                "Nombre común": "-",
-                "Error": "ID de taxón no encontrado",
-            })
-        update_progress()
-
-    # Bucle por IDs
-    for taxon_id in listado_ids:
-        nombre_cientifico = obtener_nombre_por_id(taxon_id)
-        if nombre_cientifico:
-            datos_especie = obtener_datos_proteccion(taxon_id, nombre_cientifico)
-            grupo = obtener_grupo_taxonomico_por_id(taxon_id)
-            comun = obtener_nombre_comun_por_id(taxon_id)
-            datos_especie["Grupo taxonómico"] = grupo if grupo else "-"
-            datos_especie["Nombre común"] = comun if comun else "-"
-            resultados_exitosos.append(datos_especie)
-        else:
-            resultados_fallidos.append({
-                "Especie": f"ID: {taxon_id}",
-                "Grupo taxonómico": "-",
-                "Nombre común": "-",
-                "Error": "Nombre científico no encontrado",
-            })
-        update_progress()
+    # Paralelización moderada (4 workers)
+    tareas = []
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        tareas += [ex.submit(_proc_nombre, n) for n in listado_nombres]
+        tareas += [ex.submit(_proc_id, i) for i in listado_ids]
+        for fut in as_completed(tareas):
+            fila = fut.result()
+            if fila.get("Error") and fila["Error"] != "-":
+                resultados_fallidos.append(fila)
+            else:
+                resultados_exitosos.append(fila)
+            update_progress()
 
     datos_para_tabla = resultados_exitosos + resultados_fallidos
     if not datos_para_tabla:
@@ -199,7 +235,9 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
 
     return df
 
-# --- Inicialización de la App Dash ---
+# ============================
+# App Dash
+# ============================
 app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
@@ -207,7 +245,7 @@ app = dash.Dash(
 )
 server = app.server
 
-# --- DEFINICIÓN DE LA BARRA LATERAL ---
+# --- Sidebar ---
 sidebar = html.Div(
     [
         html.Div([
@@ -215,7 +253,7 @@ sidebar = html.Div(
             html.H5("🔎 Buscador de Especies", className="text-muted"),
             html.Hr(),
             html.P(
-                "Una herramienta interactiva para explorar de forma masiva el estatus legal de la biodiversidad española a través de la API de EIDOS.",
+                "Herramienta para explorar de forma masiva el estatus legal de la biodiversidad española a través de la API de EIDOS.",
                 className="lead",
             ),
         ]),
@@ -233,15 +271,15 @@ sidebar = html.Div(
     },
 )
 
-# --- DEFINICIÓN DEL CONTENIDO PRINCIPAL ---
+# --- Content ---
 content = html.Div(
     [
         dbc.Accordion([
             dbc.AccordionItem(
                 [
-                    html.P("- Para búsquedas por nombre científico: Introduce un nombre por línea o sepáralos por comas."),
-                    html.P("- Para búsquedas por ID de EIDOS: Escribe los números separados por comas, espacios o saltos de línea."),
-                    html.P("- Haz clic en 'Comenzar Búsqueda' para procesar los datos."),
+                    html.P("- Por nombre científico: uno por línea o separados por comas/;"),
+                    html.P("- Por ID de EIDOS: números separados por comas, punto y coma, espacios o saltos de línea. Se ignoran puntos de miles (14.389 → 14389)."),
+                    html.P("- Pulsa 'Comenzar Búsqueda'."),
                 ],
                 title="ℹ️ Ver instrucciones de uso",
             )
@@ -251,7 +289,7 @@ content = html.Div(
 
         dbc.Row([
             dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nSus scrofa...", style={'width': '100%', 'height': 200})),
-            dbc.Col(dcc.Textarea(id='area-ids', placeholder="13431,9322, 14389...", style={'width': '100%', 'height': 200})),
+            dbc.Col(dcc.Textarea(id='area-ids', placeholder="13431, 9322; 14.389...", style={'width': '100%', 'height': 200})),
         ]),
 
         dbc.Button("🔎 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
@@ -276,7 +314,7 @@ content = html.Div(
     }
 )
 
-# --- LAYOUT DE LA APP ---
+# --- Layout ---
 app.layout = html.Div(
     [
         dcc.Store(id='store-resultados'),
@@ -286,8 +324,9 @@ app.layout = html.Div(
     ]
 )
 
-# --- CALLBACKS PARA LA INTERACTIVIDAD ---
-
+# ============================
+# Callbacks
+# ============================
 @app.callback(
     Output('area-nombres', 'value'),
     Output('area-ids', 'value'),
@@ -295,7 +334,6 @@ app.layout = html.Div(
     prevent_initial_call=True,
 )
 def cargar_ejemplo(n_clicks):
-    """Carga datos de ejemplo en las áreas de texto."""
     ejemplo_nombres = "Lynx pardinus\nUrsus arctos\nGamusinus alipendis"
     ejemplo_ids = "14389\n999999"
     return ejemplo_nombres, ejemplo_ids
@@ -315,13 +353,12 @@ def cargar_ejemplo(n_clicks):
         Output('progress-bar', 'value'),
         Output('progress-bar', 'label'),
     ],
+    background=True,
     prevent_initial_call=True,
 )
 def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
-    """Ejecuta la búsqueda en segundo plano y actualiza la barra de progreso."""
-    nombres_texto = nombres_texto or ""
-    ids_texto = ids_texto or ""
-
+    nombres_texto = (nombres_texto or "").strip()
+    ids_texto = (ids_texto or "").strip()
     if not nombres_texto and not ids_texto:
         return dbc.Alert("Por favor, introduce al menos un nombre o un ID para buscar.", color="warning"), no_update
 
@@ -330,30 +367,29 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
         if total > 0:
             set_progress((items_procesados / total * 100, f"{items_procesados} / {total}"))
 
-    lista_nombres = [item.strip() for item in re.split(r'[\n,]+', nombres_texto.strip()) if item.strip()]
-
-    # Acepta comas y espacios en IDs; sólo numéricos
-    lista_ids = [int(id_num) for id_num in re.split(r'[\s,]+', ids_texto.strip()) if id_num.isdigit()]
+    lista_nombres = [item.strip() for item in re.split(r'[\n,;]+', nombres_texto) if item.strip()]
+    raw_tokens = [t for t in re.split(r'[\s,;]+', ids_texto) if t]
+    def norm_id(tok: str):
+        t = tok.replace('.', '').strip()
+        return t if t.isdigit() else None
+    ids_norm = [norm_id(t) for t in raw_tokens]
+    lista_ids = [int(n) for n in ids_norm if n is not None]
 
     df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=progress_wrapper)
-
     if df_resultado.empty:
         return dbc.Alert("La búsqueda no produjo resultados.", color="info"), no_update
 
+    # 'protegido' sin depender de substrings (usa todas las columnas legales)
+    columnas_legales = [c for c in df_resultado.columns if c not in BASE_COLS]
+    df_resultado['protegido'] = df_resultado[columnas_legales].ne('-').any(axis=1) if columnas_legales else False
+
     total_consultados = len(lista_nombres) + len(lista_ids)
-
-    columnas_proteccion = [col for col in df_resultado.columns if 'Catálogo' in col or 'Convenio' in col]
-    if columnas_proteccion:
-        df_resultado['protegido'] = df_resultado[columnas_proteccion].ne('-').any(axis=1)
-    else:
-        df_resultado['protegido'] = False
-
     if 'Error' in df_resultado.columns:
-        encontrados = len(df_resultado[df_resultado['Error'] == '-'])
-        protegidos = len(df_resultado[df_resultado['protegido'] & (df_resultado['Error'] == '-')])
+        encontrados = int((df_resultado['Error'] == '-').sum())
+        protegidos = int((df_resultado['protegido'] & (df_resultado['Error'] == '-')).sum())
     else:
         encontrados = total_consultados
-        protegidos = len(df_resultado[df_resultado['protegido']])
+        protegidos = int(df_resultado['protegido'].sum())
 
     layout_resultados = html.Div([
         html.H3("📊 Resumen de Resultados", className="mt-4"),
@@ -369,7 +405,10 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
             columns=[{"name": i, "id": i} for i in df_resultado.drop(columns=['protegido'], errors='ignore').columns],
             data=df_resultado.to_dict('records'),
             style_table={'overflowX': 'auto'},
+            page_action='native',
             page_size=10,
+            filter_action='native',
+            sort_action='native',
         ),
     ])
 
@@ -382,18 +421,15 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     prevent_initial_call=True,
 )
 def descargar_excel(n_clicks, json_data):
-    """Prepara y envía el archivo Excel para su descarga."""
     if json_data is None:
         return no_update
-
     df = pd.read_json(io.StringIO(json_data), orient='split')
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.drop(columns=['protegido'], errors='ignore').to_excel(writer, index=False, sheet_name='ProteccionEspecies')
     output.seek(0)
-
     return dcc.send_bytes(output.getvalue(), "proteccion_especies.xlsx")
 
 # --- Ejecución del Servidor ---
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run_server(debug=os.getenv("DASH_DEBUG", "false").lower() == "true")
