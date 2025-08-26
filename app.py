@@ -38,7 +38,6 @@ def obtener_id_por_nombre(nombre_cientifico):
         if not datos:
             return None
         for registro in datos:
-            # Conservamos la lógica original de aceptar el 'válido'
             if registro.get("nametype") == "Aceptado/válido":
                 return registro.get("taxonid")
         return None
@@ -86,10 +85,9 @@ def obtener_datos_proteccion(taxon_id, nombre_cientifico_base):
                 columna = item.get("dataset", "Convenio Internacional")
             if columna:
                 if columna in protecciones and protecciones[columna] != '-':
-                    # Evita duplicar textos de estado por subcadenas
-                    existentes = {e.strip() for e in str(protecciones[columna]).split(',')}
+                    existentes = {e.strip() for e in str(protecciones[columna]).split(',') if e.strip()}
                     if estado not in existentes:
-                        protecciones[columna] = ", ".join(list(existentes | {estado}))
+                        protecciones[columna] = ", ".join(sorted(list(existentes | {estado})))
                 else:
                     protecciones[columna] = estado
         return protecciones
@@ -100,10 +98,9 @@ def obtener_datos_proteccion(taxon_id, nombre_cientifico_base):
 # --- NUEVAS funciones: Grupo taxonómico y Nombre común ---
 def obtener_grupo_taxonomico_por_id(taxon_id):
     """
-    Devuelve el valor de 'taxonomicgroup' (texto) desde /v_taxonomia filtrando por taxonid.
-    Si hay varias filas, toma el primer valor no vacío.
+    Devuelve el valor de 'taxonomicgroup' (texto) desde /v_taxonomia filtrando por taxonid con sintaxis PostgREST.
     """
-    filas = _get_json("/v_taxonomia", {"taxonid": taxon_id})
+    filas = _get_json("/v_taxonomia", {"taxonid": f"eq.{taxon_id}"})
     grupos = [f.get("taxonomicgroup") for f in filas if f.get("taxonomicgroup")]
     return grupos[0] if grupos else None
 
@@ -111,8 +108,9 @@ def obtener_nombre_comun_por_id(taxon_id):
     """
     Devuelve un nombre común desde /v_nombrescomunes priorizando castellano (ididioma=1)
     y espreferente=True si existiera. Si no, cualquier castellano; si no, el primero disponible.
+    Usa filtro PostgREST idtaxon=eq.{taxon_id}.
     """
-    filas = _get_json("/v_nombrescomunes", {"idtaxon": taxon_id})
+    filas = _get_json("/v_nombrescomunes", {"idtaxon": f"eq.{taxon_id}"})
     if not filas:
         return None
     es_castellano = [f for f in filas if f.get("ididioma") == 1]
