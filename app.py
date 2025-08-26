@@ -357,8 +357,8 @@ content = html.Div(
         dbc.Accordion([
             dbc.AccordionItem(
                 [
-                    html.P("- Por nombre científico: uno por línea o separados por comas/;"),
-                    html.P("- Por ID de EIDOS: números separados por comas, punto y coma, espacios o saltos de línea. Se ignoran puntos de miles (14.389 → 14389)."),
+                    html.P("- Por nombre científico: uno por línea o separados por comas."),
+                    html.P("- Por ID de EIDOS: números separados por comas, punto y coma, espacios o saltos de línea."),
                     html.P("- Pulsa 'Comenzar Búsqueda'."),
                 ],
                 title="ℹ️ Ver instrucciones de uso",
