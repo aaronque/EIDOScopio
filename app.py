@@ -1,4 +1,4 @@
-# app.py (final con background=True, filtros PostgREST, robustez y progreso)
+# app.py (final con background=True, cancelación, GitHub en sidebar y limpiar datos)
 # Nota de despliegue: usa `gunicorn app:server` (no `app:app`).
 
 import os
@@ -288,8 +288,8 @@ content = html.Div(
         dbc.Accordion([
             dbc.AccordionItem(
                 [
-                    html.P("- Por nombre científico: uno por línea o separados por comas/;"),
-                    html.P("- Por ID de EIDOS: números separados por comas, punto y coma, espacios o saltos de línea. Se ignoran puntos de miles (14.389 → 14389)."),
+                    html.P("- Por nombre científico: uno por línea o separados por comas;"),
+                    html.P("- Por ID de EIDOS: números separados por comas, punto y coma, espacios o saltos de línea."),
                     html.P("- Pulsa 'Comenzar Búsqueda'."),
                 ],
                 title="ℹ️ Ver instrucciones de uso",
@@ -330,6 +330,7 @@ content = html.Div(
 app.layout = html.Div(
     [
         dcc.Store(id='store-resultados'),
+        dcc.Store(id='run-flag', data=False),  # << Flag de ejecución/cancelación
         dcc.Download(id='download-excel'),
         sidebar,
         content,
@@ -339,6 +340,7 @@ app.layout = html.Div(
 # ============================
 # Callbacks
 # ============================
+
 # Unificado: cargar ejemplo o limpiar datos
 @app.callback(
     Output('area-nombres', 'value'),
@@ -358,14 +360,26 @@ def set_textareas(n_ejemplo, n_limpiar):
         return "", ""
     return no_update, no_update
 
+# Toggle de ejecución/cancelación con el mismo botón
+@app.callback(
+    Output('run-flag', 'data'),
+    Input('btn-busqueda', 'n_clicks'),
+    State('run-flag', 'data'),
+    prevent_initial_call=True,
+)
+def toggle_run_flag(n_clicks, running_now):
+    # False -> True (inicia); True -> False (cancela)
+    return not bool(running_now)
+
+# Long callback en segundo plano con cancelación
 @app.callback(
     Output('output-resultados', 'children'),
     Output('store-resultados', 'data'),
-    Input('btn-busqueda', 'n_clicks'),
+    Input('run-flag', 'data'),  # << dispara al pasar a True (iniciar) y a False (cancelar)
     State('area-nombres', 'value'),
     State('area-ids', 'value'),
     running=[
-        (Output('btn-busqueda', 'disabled'), True, False),
+        # OJO: no deshabilitamos el botón para poder cancelarlo
         (Output('btn-busqueda', 'children'), "⏹️ Detener búsqueda", "🔎 Comenzar Búsqueda"),
         (Output('btn-busqueda', 'color'), "danger", "primary"),
         (Output('progress-container', 'style'), {'display': 'block'}, {'display': 'none'}),
@@ -375,10 +389,15 @@ def set_textareas(n_ejemplo, n_limpiar):
         Output('progress-bar', 'value'),
         Output('progress-bar', 'label'),
     ],
+    cancel=[Input('run-flag', 'data')],  # << al cambiar, cancela el trabajo en curso
     background=True,
     prevent_initial_call=True,
 )
-def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
+def ejecutar_busqueda(set_progress, run_flag, nombres_texto, ids_texto):
+    # Si el flag está en False, esta invocación es un "disparo" de cancelación: no iniciar nada nuevo.
+    if not run_flag:
+        return no_update, no_update
+
     nombres_texto = (nombres_texto or "").strip()
     ids_texto = (ids_texto or "").strip()
     if not nombres_texto and not ids_texto:
