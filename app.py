@@ -12,61 +12,119 @@ import diskcache
 cache = diskcache.Cache("./cache")
 background_callback_manager = dash.DiskcacheManager(cache)
 
-# --- Lógica de Búsqueda (Sin cambios) ---
+# --- Lógica de Búsqueda ---
 API_BASE_URL = "https://iepnb.gob.es/api/especie"
 
-def obtener_id_por_nombre(nombre_cientifico):
-    """Busca el ID de taxón para un nombre científico."""
+# --- Utilidades HTTP (timeouts y manejo básico de errores) ---
+def _get_json(endpoint, params):
     try:
-        respuesta = requests.get(f"{API_BASE_URL}/rpc/obtenertaxonespornombre", params={"_nombretaxon": nombre_cientifico})
-        respuesta.raise_for_status()
-        datos = respuesta.json()
-        if not datos: return None
+        r = requests.get(f"{API_BASE_URL}{endpoint}", params=params, timeout=(5, 15))
+        r.raise_for_status()
+        return r.json() or []
+    except requests.exceptions.RequestException:
+        return []
+
+# --- Funciones API documentadas ---
+def obtener_id_por_nombre(nombre_cientifico):
+    """Busca el ID de taxón para un nombre científico (RPC documentado)."""
+    try:
+        r = requests.get(
+            f"{API_BASE_URL}/rpc/obtenertaxonespornombre",
+            params={"_nombretaxon": nombre_cientifico},
+            timeout=(5, 15),
+        )
+        r.raise_for_status()
+        datos = r.json() or []
+        if not datos:
+            return None
         for registro in datos:
-            if registro.get('nametype') == 'Aceptado/válido':
-                return registro.get('taxonid')
+            # Conservamos la lógica original de aceptar el 'válido'
+            if registro.get("nametype") == "Aceptado/válido":
+                return registro.get("taxonid")
         return None
     except requests.exceptions.RequestException:
         return None
 
 def obtener_nombre_por_id(taxon_id):
-    """Busca el nombre científico aceptado para un ID de taxón."""
+    """Busca el nombre científico aceptado para un ID de taxón (RPC documentado)."""
     try:
-        respuesta = requests.get(f"{API_BASE_URL}/rpc/obtenertaxonporid", params={"_idtaxon": taxon_id})
-        respuesta.raise_for_status()
-        datos = respuesta.json()
-        if datos and datos[0].get('name'):
-            return datos[0]['name']
+        r = requests.get(
+            f"{API_BASE_URL}/rpc/obtenertaxonporid",
+            params={"_idtaxon": taxon_id},
+            timeout=(5, 15),
+        )
+        r.raise_for_status()
+        datos = r.json() or []
+        if datos and datos[0].get("name"):
+            return datos[0]["name"]
         return None
     except requests.exceptions.RequestException:
         return None
 
 def obtener_datos_proteccion(taxon_id, nombre_cientifico_base):
-    """Obtiene y procesa los datos de protección para un único taxón ID."""
+    """Obtiene y procesa los datos de protección para un único taxón ID (RPC documentado)."""
     protecciones = {"Especie": nombre_cientifico_base}
     try:
-        respuesta_legal = requests.get(f"{API_BASE_URL}/rpc/obtenerestadoslegalesportaxonid", params={"_idtaxon": taxon_id})
-        respuesta_legal.raise_for_status()
-        datos_legales = respuesta_legal.json()
+        r = requests.get(
+            f"{API_BASE_URL}/rpc/obtenerestadoslegalesportaxonid",
+            params={"_idtaxon": taxon_id},
+            timeout=(5, 15),
+        )
+        r.raise_for_status()
+        datos_legales = r.json() or []
         for item in datos_legales:
-            if item.get('idvigente') != 1: continue
-            ambito = item.get('ambito')
-            estado = item.get('estadolegal')
+            if item.get("idvigente") != 1:
+                continue
+            ambito = item.get("ambito")
+            estado = item.get("estadolegal")
             columna = ""
-            if ambito == "Nacional": columna = item.get('dataset', 'Catálogo Nacional')
-            elif ambito == "Autonómico": columna = f"Catálogo - {item.get('ccaa', 'Desconocida')}"
-            elif ambito == "Internacional": columna = item.get('dataset', 'Convenio Internacional')
+            if ambito == "Nacional":
+                columna = item.get("dataset", "Catálogo Nacional")
+            elif ambito == "Autonómico":
+                columna = f"Catálogo - {item.get('ccaa', 'Desconocida')}"
+            elif ambito == "Internacional":
+                columna = item.get("dataset", "Convenio Internacional")
             if columna:
                 if columna in protecciones and protecciones[columna] != '-':
-                    if estado not in protecciones[columna]: protecciones[columna] += f", {estado}"
-                else: protecciones[columna] = estado
+                    # Evita duplicar textos de estado por subcadenas
+                    existentes = {e.strip() for e in str(protecciones[columna]).split(',')}
+                    if estado not in existentes:
+                        protecciones[columna] = ", ".join(list(existentes | {estado}))
+                else:
+                    protecciones[columna] = estado
         return protecciones
     except requests.exceptions.RequestException:
-        protecciones['Error'] = 'Fallo al obtener datos legales'
+        protecciones["Error"] = "Fallo al obtener datos legales"
         return protecciones
 
+# --- NUEVAS funciones: Grupo taxonómico y Nombre común ---
+def obtener_grupo_taxonomico_por_id(taxon_id):
+    """
+    Devuelve el valor de 'taxonomicgroup' (texto) desde /v_taxonomia filtrando por taxonid.
+    Si hay varias filas, toma el primer valor no vacío.
+    """
+    filas = _get_json("/v_taxonomia", {"taxonid": taxon_id})
+    grupos = [f.get("taxonomicgroup") for f in filas if f.get("taxonomicgroup")]
+    return grupos[0] if grupos else None
+
+def obtener_nombre_comun_por_id(taxon_id):
+    """
+    Devuelve un nombre común desde /v_nombrescomunes priorizando castellano (ididioma=1)
+    y espreferente=True si existiera. Si no, cualquier castellano; si no, el primero disponible.
+    """
+    filas = _get_json("/v_nombrescomunes", {"idtaxon": taxon_id})
+    if not filas:
+        return None
+    es_castellano = [f for f in filas if f.get("ididioma") == 1]
+    pref_cast = [f for f in es_castellano if f.get("espreferente") is True]
+    if pref_cast:
+        return pref_cast[0].get("nombre_comun") or None
+    if es_castellano:
+        return es_castellano[0].get("nombre_comun") or None
+    return filas[0].get("nombre_comun") or None
+
+# --- Orquestación: genera DataFrame con progreso ---
 def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_callback=None):
-    """Orquesta la búsqueda y genera el DataFrame, actualizando el progreso."""
     resultados_exitosos = []
     resultados_fallidos = []
     listado_nombres = listado_nombres or []
@@ -84,42 +142,68 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
         if progress_callback:
             progress_callback((items_procesados, total_items))
 
+    # Bucle por nombres científicos
     for nombre in listado_nombres:
         taxon_id = obtener_id_por_nombre(nombre)
         if taxon_id:
             datos_especie = obtener_datos_proteccion(taxon_id, nombre)
+            grupo = obtener_grupo_taxonomico_por_id(taxon_id)
+            comun = obtener_nombre_comun_por_id(taxon_id)
+            datos_especie["Grupo taxonómico"] = grupo if grupo else "-"
+            datos_especie["Nombre común"] = comun if comun else "-"
             resultados_exitosos.append(datos_especie)
         else:
-            resultados_fallidos.append({"Especie": nombre, "Error": "ID de taxón no encontrado"})
+            resultados_fallidos.append({
+                "Especie": nombre,
+                "Grupo taxonómico": "-",
+                "Nombre común": "-",
+                "Error": "ID de taxón no encontrado",
+            })
         update_progress()
 
+    # Bucle por IDs
     for taxon_id in listado_ids:
         nombre_cientifico = obtener_nombre_por_id(taxon_id)
         if nombre_cientifico:
             datos_especie = obtener_datos_proteccion(taxon_id, nombre_cientifico)
+            grupo = obtener_grupo_taxonomico_por_id(taxon_id)
+            comun = obtener_nombre_comun_por_id(taxon_id)
+            datos_especie["Grupo taxonómico"] = grupo if grupo else "-"
+            datos_especie["Nombre común"] = comun if comun else "-"
             resultados_exitosos.append(datos_especie)
         else:
-            resultados_fallidos.append({"Especie": f"ID: {taxon_id}", "Error": "Nombre científico no encontrado"})
+            resultados_fallidos.append({
+                "Especie": f"ID: {taxon_id}",
+                "Grupo taxonómico": "-",
+                "Nombre común": "-",
+                "Error": "Nombre científico no encontrado",
+            })
         update_progress()
 
     datos_para_tabla = resultados_exitosos + resultados_fallidos
-    if not datos_para_tabla: return pd.DataFrame()
+    if not datos_para_tabla:
+        return pd.DataFrame()
 
     df = pd.DataFrame(datos_para_tabla)
     df.fillna('-', inplace=True)
+
+    # Reordenación: Especie, Grupo, Común, ... Error al final
     if 'Especie' in df.columns:
         cols = df.columns.tolist()
-        cols.insert(0, cols.pop(cols.index('Especie')))
+        for fixed in ["Especie", "Grupo taxonómico", "Nombre común"]:
+            if fixed in cols:
+                cols.insert(0, cols.pop(cols.index(fixed)))
         if 'Error' in cols:
             cols.append(cols.pop(cols.index('Error')))
         df = df.reindex(columns=cols)
+
     return df
 
 # --- Inicialización de la App Dash ---
 app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.BOOTSTRAP],
-    background_callback_manager=background_callback_manager
+    background_callback_manager=background_callback_manager,
 )
 server = app.server
 
@@ -132,10 +216,10 @@ sidebar = html.Div(
             html.Hr(),
             html.P(
                 "Una herramienta interactiva para explorar de forma masiva el estatus legal de la biodiversidad española a través de la API de EIDOS.",
-                className="lead"
+                className="lead",
             ),
         ]),
-       ],
+    ],
     style={
         "position": "fixed",
         "top": 0,
@@ -145,7 +229,7 @@ sidebar = html.Div(
         "padding": "2rem 1rem",
         "background-color": "#f8f9fa",
         "display": "flex",
-        "flex-direction": "column"
+        "flex-direction": "column",
     },
 )
 
@@ -157,7 +241,7 @@ content = html.Div(
                 [
                     html.P("- Para búsquedas por nombre científico: Introduce un nombre por línea o sepáralos por comas."),
                     html.P("- Para búsquedas por ID de EIDOS: Escribe los números separados por comas, espacios o saltos de línea."),
-                    html.P("- Haz clic en 'Comenzar Búsqueda' para procesar los datos.")
+                    html.P("- Haz clic en 'Comenzar Búsqueda' para procesar los datos."),
                 ],
                 title="ℹ️ Ver instrucciones de uso",
             )
@@ -198,7 +282,7 @@ app.layout = html.Div(
         dcc.Store(id='store-resultados'),
         dcc.Download(id='download-excel'),
         sidebar,
-        content
+        content,
     ]
 )
 
@@ -208,7 +292,7 @@ app.layout = html.Div(
     Output('area-nombres', 'value'),
     Output('area-ids', 'value'),
     Input('btn-ejemplo', 'n_clicks'),
-    prevent_initial_call=True
+    prevent_initial_call=True,
 )
 def cargar_ejemplo(n_clicks):
     """Carga datos de ejemplo en las áreas de texto."""
@@ -232,7 +316,7 @@ def cargar_ejemplo(n_clicks):
         Output('progress-bar', 'label'),
     ],
     background=True,
-    prevent_initial_call=True
+    prevent_initial_call=True,
 )
 def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     """Ejecuta la búsqueda en segundo plano y actualiza la barra de progreso."""
@@ -248,8 +332,8 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
             set_progress((items_procesados / total * 100, f"{items_procesados} / {total}"))
 
     lista_nombres = [item.strip() for item in re.split(r'[\n,]+', nombres_texto.strip()) if item.strip()]
-    
-    # --- LÍNEA MODIFICADA PARA ACEPTAR COMAS ---
+
+    # Acepta comas y espacios en IDs; sólo numéricos
     lista_ids = [int(id_num) for id_num in re.split(r'[\s,]+', ids_texto.strip()) if id_num.isdigit()]
 
     df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=progress_wrapper)
@@ -258,7 +342,7 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
         return dbc.Alert("La búsqueda no produjo resultados.", color="info"), no_update
 
     total_consultados = len(lista_nombres) + len(lista_ids)
-    
+
     columnas_proteccion = [col for col in df_resultado.columns if 'Catálogo' in col or 'Convenio' in col]
     if columnas_proteccion:
         df_resultado['protegido'] = df_resultado[columnas_proteccion].ne('-').any(axis=1)
@@ -287,7 +371,7 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
             data=df_resultado.to_dict('records'),
             style_table={'overflowX': 'auto'},
             page_size=10,
-        )
+        ),
     ])
 
     return layout_resultados, df_resultado.to_json(date_format='iso', orient='split')
@@ -296,7 +380,7 @@ def ejecutar_busqueda(set_progress, n_clicks, nombres_texto, ids_texto):
     Output('download-excel', 'data'),
     Input('btn-descarga', 'n_clicks'),
     State('store-resultados', 'data'),
-    prevent_initial_call=True
+    prevent_initial_call=True,
 )
 def descargar_excel(n_clicks, json_data):
     """Prepara y envía el archivo Excel para su descarga."""
