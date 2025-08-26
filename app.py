@@ -1,10 +1,11 @@
-# app.py (final con background=True, cancelación, GitHub en sidebar y limpiar datos)
-# Nota de despliegue: usa `gunicorn app:server` (no `app:app`).
+# app.py (final): orden de columnas fijo, botón limpiar alineado y cancelación de búsqueda
+# Despliegue: usar `gunicorn app:server`
 
 import os
 import io
 import re
 import time
+import unicodedata
 from threading import Lock
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -130,12 +131,12 @@ def obtener_datos_proteccion(taxon_id: int, nombre_cientifico_base: str):
                 continue
             if ambito == "Nacional":
                 columna = item.get("dataset", "Catálogo Nacional")
-            elif ambito == "Autonómico":
+            elif ambito == "Autonómico" or ambito == "Regional":
                 columna = f"Catálogo - {item.get('ccaa', 'Desconocida')}"
             elif ambito == "Internacional":
                 columna = item.get("dataset", "Convenio Internacional")
             else:
-                columna = None
+                columna = item.get("dataset") or None
             if columna:
                 estados_por_col[columna].add(estado)
         for col, estados in estados_por_col.items():
@@ -164,9 +165,86 @@ def obtener_nombre_comun_por_id(taxon_id: int):
     return filas[0].get("nombre_comun") or None
 
 # ============================
+# Orden estable de columnas
+# ============================
+def _normalize(s: str) -> str:
+    s = s or ""
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    return s.lower().strip()
+
+def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+
+    # 1) Fijas al inicio
+    fixed = ["Grupo taxonómico", "Nombre común", "Especie"]
+    fixed_present = [c for c in fixed if c in df.columns]
+
+    # 2) Columnas legales dinámicas (excluye base + Error + protegido)
+    base_exclude = set(BASE_COLS) - {"Error"}  # queremos 'Error' al final
+    legales = [c for c in df.columns if c not in base_exclude and c != "Error"]
+
+    # 3) Clasificación por ámbito (patrones en el nombre de columna)
+    auton = [c for c in legales if c.startswith("Catálogo - ")]
+    def es_nacional(c: str) -> bool:
+        cl = _normalize(c)
+        return cl == "catalogo nacional" or "nacional" in cl
+    nacional = [c for c in legales if c not in auton and es_nacional(c)]
+    internacional = [c for c in legales if c not in auton and c not in nacional]
+
+    # 4) Prioridad dentro de Internacional (europeas/internacionales primero con patrón)
+    patrones_intl = [
+        ("directiva aves", 1),
+        ("aves", 2),
+        ("directiva habitat", 3),
+        ("habitat", 4),
+        ("habitats", 4),
+        ("cites", 5),
+        ("berna", 6),
+        ("bonn", 7),
+        ("cms", 7),
+        ("aewa", 8),
+    ]
+    def intl_priority(name: str) -> int:
+        n = _normalize(name)
+        for p, pr in patrones_intl:
+            if p in n:
+                return pr
+        return 100
+    internacional_sorted = sorted(internacional, key=lambda x: (intl_priority(x), x))
+
+    # 5) Nacional: "Catálogo Nacional" primero y luego alfabético
+    def is_cat_nacional(name: str) -> bool:
+        return _normalize(name) == "catalogo nacional"
+    nacional_sorted = sorted(nacional, key=lambda x: (0 if is_cat_nacional(x) else 1, x))
+
+    # 6) Autonómicas: orden fijo de CCAA, luego alfabético si no coincide
+    ccaa_order = [
+        "Andalucía","Aragón","Asturias","Illes Balears","Canarias","Cantabria",
+        "Castilla-La Mancha","Castilla y León","Cataluña","Ceuta","Comunitat Valenciana",
+        "Extremadura","Galicia","La Rioja","Comunidad de Madrid","Melilla",
+        "Región de Murcia","Navarra","País Vasco"
+    ]
+    rank_ccaa = {f"Catálogo - {n}": i for i, n in enumerate(ccaa_order)}
+    auton_sorted = sorted(auton, key=lambda x: (rank_ccaa.get(x, 999), x))
+
+    # 7) Resto y Error
+    ordered = fixed_present + internacional_sorted + nacional_sorted + auton_sorted
+    # Añade cualquier otra columna no contemplada (p.ej., nuevas legales con nombres inesperados)
+    leftover = [c for c in df.columns if c not in ordered and c not in {"protegido"}]
+    if "Error" in leftover:
+        leftover.remove("Error")
+        ordered += leftover + ["Error"]
+    else:
+        ordered += leftover
+
+    # Filtra a las existentes y reordena
+    ordered = [c for c in ordered if c in df.columns]
+    return df.reindex(columns=ordered)
+
+# ============================
 # Lógica de orquestación
 # ============================
-
 def _proc_nombre(nombre: str):
     taxon_id = obtener_id_por_nombre(nombre)
     if not taxon_id:
@@ -223,16 +301,7 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
     df = pd.DataFrame(datos_para_tabla)
     df.fillna('-', inplace=True)
 
-    # Reordenación: Especie, Grupo, Común, ... Error al final
-    if 'Especie' in df.columns:
-        cols = df.columns.tolist()
-        for fixed in ["Especie", "Grupo taxonómico", "Nombre común"]:
-            if fixed in cols:
-                cols.insert(0, cols.pop(cols.index(fixed)))
-        if 'Error' in cols:
-            cols.append(cols.pop(cols.index('Error')))
-        df = df.reindex(columns=cols)
-
+    # No reordenamos aquí; el orden final se aplica en el callback con `ordenar_columnas_df`.
     return df
 
 # ============================
@@ -288,16 +357,22 @@ content = html.Div(
         dbc.Accordion([
             dbc.AccordionItem(
                 [
-                    html.P("- Por nombre científico: uno por línea o separados por comas;"),
-                    html.P("- Por ID de EIDOS: números separados por comas, punto y coma, espacios o saltos de línea."),
+                    html.P("- Por nombre científico: uno por línea o separados por comas/;"),
+                    html.P("- Por ID de EIDOS: números separados por comas, punto y coma, espacios o saltos de línea. Se ignoran puntos de miles (14.389 → 14389)."),
                     html.P("- Pulsa 'Comenzar Búsqueda'."),
                 ],
                 title="ℹ️ Ver instrucciones de uso",
             )
         ]),
 
-        dbc.Button("Cargar datos de ejemplo", id="btn-ejemplo", color="secondary", className="mt-3 mb-3"),
-        dbc.Button("🧹 Limpiar datos", id="btn-limpiar", color="light", className="mt-0 mb-3"),
+        # Botones alineados en ButtonGroup
+        dbc.ButtonGroup(
+            [
+                dbc.Button("Cargar datos de ejemplo", id="btn-ejemplo", color="secondary"),
+                dbc.Button("🧹 Limpiar datos", id="btn-limpiar", color="light"),
+            ],
+            className="mt-3 mb-3",
+        ),
 
         dbc.Row([
             dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nSus scrofa...", style={'width': '100%', 'height': 200})),
@@ -330,7 +405,7 @@ content = html.Div(
 app.layout = html.Div(
     [
         dcc.Store(id='store-resultados'),
-        dcc.Store(id='run-flag', data=False),  # << Flag de ejecución/cancelación
+        dcc.Store(id='run-flag', data=False),  # Flag de ejecución/cancelación
         dcc.Download(id='download-excel'),
         sidebar,
         content,
@@ -340,7 +415,6 @@ app.layout = html.Div(
 # ============================
 # Callbacks
 # ============================
-
 # Unificado: cargar ejemplo o limpiar datos
 @app.callback(
     Output('area-nombres', 'value'),
@@ -371,15 +445,15 @@ def toggle_run_flag(n_clicks, running_now):
     # False -> True (inicia); True -> False (cancela)
     return not bool(running_now)
 
-# Long callback en segundo plano con cancelación
+# Long callback en segundo plano con cancelación y orden de columnas fijo
 @app.callback(
     Output('output-resultados', 'children'),
     Output('store-resultados', 'data'),
-    Input('run-flag', 'data'),  # << dispara al pasar a True (iniciar) y a False (cancelar)
+    Input('run-flag', 'data'),  # dispara al pasar a True (iniciar) y a False (cancelar)
     State('area-nombres', 'value'),
     State('area-ids', 'value'),
     running=[
-        # OJO: no deshabilitamos el botón para poder cancelarlo
+        # No deshabilitamos el botón para poder cancelarlo
         (Output('btn-busqueda', 'children'), "⏹️ Detener búsqueda", "🔎 Comenzar Búsqueda"),
         (Output('btn-busqueda', 'color'), "danger", "primary"),
         (Output('progress-container', 'style'), {'display': 'block'}, {'display': 'none'}),
@@ -389,7 +463,7 @@ def toggle_run_flag(n_clicks, running_now):
         Output('progress-bar', 'value'),
         Output('progress-bar', 'label'),
     ],
-    cancel=[Input('run-flag', 'data')],  # << al cambiar, cancela el trabajo en curso
+    cancel=[Input('run-flag', 'data')],  # al cambiar, cancela el trabajo en curso
     background=True,
     prevent_initial_call=True,
 )
@@ -420,10 +494,11 @@ def ejecutar_busqueda(set_progress, run_flag, nombres_texto, ids_texto):
     if df_resultado.empty:
         return dbc.Alert("La búsqueda no produjo resultados.", color="info"), no_update
 
-    # 'protegido' sin depender de substrings (usa todas las columnas legales)
+    # 'protegido' calculado a partir de todas las columnas legales
     columnas_legales = [c for c in df_resultado.columns if c not in BASE_COLS]
     df_resultado['protegido'] = df_resultado[columnas_legales].ne('-').any(axis=1) if columnas_legales else False
 
+    # Resumen
     total_consultados = len(lista_nombres) + len(lista_ids)
     if 'Error' in df_resultado.columns:
         encontrados = int((df_resultado['Error'] == '-').sum())
@@ -431,6 +506,9 @@ def ejecutar_busqueda(set_progress, run_flag, nombres_texto, ids_texto):
     else:
         encontrados = total_consultados
         protegidos = int(df_resultado['protegido'].sum())
+
+    # Ordenar columnas de forma estable e invariable
+    df_ordenado = ordenar_columnas_df(df_resultado)
 
     layout_resultados = html.Div([
         html.H3("📊 Resumen de Resultados", className="mt-4"),
@@ -443,8 +521,8 @@ def ejecutar_busqueda(set_progress, run_flag, nombres_texto, ids_texto):
         dbc.Button("📥 Descargar Tabla como Excel", id="btn-descarga", color="success", className="mt-3 mb-3 w-100"),
         dash_table.DataTable(
             id='tabla-resultados',
-            columns=[{"name": i, "id": i} for i in df_resultado.drop(columns=['protegido'], errors='ignore').columns],
-            data=df_resultado.to_dict('records'),
+            columns=[{"name": i, "id": i} for i in df_ordenado.drop(columns=['protegido'], errors='ignore').columns],
+            data=df_ordenado.to_dict('records'),
             style_table={'overflowX': 'auto'},
             page_action='native',
             page_size=10,
@@ -453,7 +531,7 @@ def ejecutar_busqueda(set_progress, run_flag, nombres_texto, ids_texto):
         ),
     ])
 
-    return layout_resultados, df_resultado.to_json(date_format='iso', orient='split')
+    return layout_resultados, df_ordenado.to_json(date_format='iso', orient='split')
 
 @app.callback(
     Output('download-excel', 'data'),
