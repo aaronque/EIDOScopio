@@ -257,6 +257,17 @@ sidebar = html.Div(
                 className="lead",
             ),
         ]),
+        # Ícono GitHub anclado abajo
+        html.A(
+            html.Img(
+                src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
+                style={"width": "28px", "height": "28px"}
+            ),
+            href="https://github.com/aaronque/EIDOScopio",
+            target="_blank",
+            title="Repositorio en GitHub",
+            style={"marginTop": "auto", "alignSelf": "center"}
+        ),
     ],
     style={
         "position": "fixed",
@@ -277,8 +288,8 @@ content = html.Div(
         dbc.Accordion([
             dbc.AccordionItem(
                 [
-                    html.P("- Por nombre científico: uno por línea o separados por comas;"),
-                    html.P("- Por ID de EIDOS: números separados por comas, punto y coma, espacios o saltos de línea."),
+                    html.P("- Por nombre científico: uno por línea o separados por comas/;"),
+                    html.P("- Por ID de EIDOS: números separados por comas, punto y coma, espacios o saltos de línea. Se ignoran puntos de miles (14.389 → 14389)."),
                     html.P("- Pulsa 'Comenzar Búsqueda'."),
                 ],
                 title="ℹ️ Ver instrucciones de uso",
@@ -286,6 +297,7 @@ content = html.Div(
         ]),
 
         dbc.Button("Cargar datos de ejemplo", id="btn-ejemplo", color="secondary", className="mt-3 mb-3"),
+        dbc.Button("🧹 Limpiar datos", id="btn-limpiar", color="light", className="mt-0 mb-3"),
 
         dbc.Row([
             dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nSus scrofa...", style={'width': '100%', 'height': 200})),
@@ -327,16 +339,24 @@ app.layout = html.Div(
 # ============================
 # Callbacks
 # ============================
+# Unificado: cargar ejemplo o limpiar datos
 @app.callback(
     Output('area-nombres', 'value'),
     Output('area-ids', 'value'),
     Input('btn-ejemplo', 'n_clicks'),
+    Input('btn-limpiar', 'n_clicks'),
     prevent_initial_call=True,
 )
-def cargar_ejemplo(n_clicks):
+def set_textareas(n_ejemplo, n_limpiar):
     ejemplo_nombres = "Lynx pardinus\nUrsus arctos\nGamusinus alipendis"
     ejemplo_ids = "14389\n999999"
-    return ejemplo_nombres, ejemplo_ids
+    ctx = dash.callback_context
+    triggered = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
+    if triggered == 'btn-ejemplo':
+        return ejemplo_nombres, ejemplo_ids
+    if triggered == 'btn-limpiar':
+        return "", ""
+    return no_update, no_update
 
 @app.callback(
     Output('output-resultados', 'children'),
@@ -346,6 +366,8 @@ def cargar_ejemplo(n_clicks):
     State('area-ids', 'value'),
     running=[
         (Output('btn-busqueda', 'disabled'), True, False),
+        (Output('btn-busqueda', 'children'), "⏹️ Detener búsqueda", "🔎 Comenzar Búsqueda"),
+        (Output('btn-busqueda', 'color'), "danger", "primary"),
         (Output('progress-container', 'style'), {'display': 'block'}, {'display': 'none'}),
         (Output('output-resultados', 'style'), {'display': 'none'}, {'display': 'block'}),
     ],
