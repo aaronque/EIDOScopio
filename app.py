@@ -288,7 +288,7 @@ app.layout = html.Div(
 
 # --- CALLBACKS PARA LA INTERACTIVIDAD ---
 
-@app.long_callback(
+@app.callback(
     Output('area-nombres', 'value'),
     Output('area-ids', 'value'),
     Input('btn-ejemplo', 'n_clicks'),
