@@ -4,5 +4,3 @@ pandas
 requests
 xlsxwriter
 gunicorn
-rapidfuzz>=3.0.0
-pyarrow
