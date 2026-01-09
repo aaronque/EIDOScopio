@@ -11,12 +11,10 @@ Consultar el estatus legal de una lista de especies en la web oficial de EIDOS r
 
 **EIDOScopio resuelve este problema permitiendo consultas por lotes (batch processing).** Pegas tu lista completa de nombres científicos (o IDs) y obtienes al instante una tabla unificada con toda la información legal y biológica.
 
-*(Descomenta esta línea cuando subas tu captura de pantalla)*
-
 ## 🚀 Características Clave
 
 ### 1. Búsqueda Masiva Real
-Olvídate de las pestañas infinitas. Copia una columna de Excel con 200 especies, pégala en EIDOScopio y obtén un informe completo en segundos.
+Copia una columna de Excel con 200 especies, pégala en EIDOScopio y obtén una tabla completa en segundos.
 
 ### 2. Cruce de Datos Integral
 Para cada especie, la herramienta consulta simultáneamente múltiples fuentes de la API del MITECO:
@@ -24,12 +22,11 @@ Para cada especie, la herramienta consulta simultáneamente múltiples fuentes d
 * **🌍 Conservación (Biología):** Categorías de amenaza según Libros Rojos (España, Mundial) y criterios UICN.
 
 ### 3. Motor "Fuzzy Match" Inteligente
-¿Tienes erratas en tu lista? No hay problema.
 * Detecta errores tipográficos automáticamente (ej. *Vorderea* → *Borderea*).
 * Utiliza lógica híbrida para evitar falsos positivos taxonómicos.
 
 ### 4. Exportación Directa
-Descarga los resultados en un archivo **Excel (.xlsx)** limpio y ordenado, listo para anexar a tus informes técnicos o estudios de impacto ambiental.
+Descarga los resultados en un archivo **Excel (.xlsx)** limpio y ordenado.
 
 ---
 
