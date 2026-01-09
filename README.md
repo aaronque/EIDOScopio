@@ -1,45 +1,72 @@
 # 🦉 EIDOScopio
 
-> **Buscador Integral de Biodiversidad: Estatus Legal y Conservación en España.**
+> **La herramienta de consulta masiva para el Inventario Español del Patrimonio Natural y Biodiversidad.**
 
-[![Render](https://img.shields.io/badge/Render-Ver_Aplicación_En_Vivo-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://eidoscopio.onrender.com)
-**EIDOScopio** es una herramienta web que cruza datos de múltiples fuentes oficiales para ofrecer una radiografía rápida de cualquier especie. Interactúa con la API del **Inventario Español del Patrimonio Natural y Biodiversidad (IEPNB/EIDOS)**.
+[![Render](https://img.shields.io/badge/Render-Abrir_App_Web-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://eidoscopio.onrender.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🎯 ¿Qué hace?
+## ⚡ El Problema vs. La Solución
 
-Permite a investigadores y consultores consultar masivamente:
-1.  **Protección Legal:** Catálogos (Nacional y CCAA) y Directivas Europeas.
-2.  **Estado de Conservación:** Categorías de amenaza (Libros Rojos y UICN).
-3.  **Corrección Taxonómica:** Un motor inteligente corrige erratas en los nombres científicos automáticamente.
+Consultar el estatus legal de una lista de especies en la web oficial de EIDOS requiere buscar **una por una**, entrar en su ficha, revisar las leyes y repetir el proceso. Si tienes una lista de 50 o 100 especies, esto lleva horas.
+
+**EIDOScopio resuelve este problema permitiendo consultas por lotes (batch processing).** Pegas tu lista completa de nombres científicos (o IDs) y obtienes al instante una tabla unificada con toda la información legal y biológica.
+
+*(Descomenta esta línea cuando subas tu captura de pantalla)*
+
+## 🚀 Características Clave
+
+### 1. Búsqueda Masiva Real
+Olvídate de las pestañas infinitas. Copia una columna de Excel con 200 especies, pégala en EIDOScopio y obtén un informe completo en segundos.
+
+### 2. Cruce de Datos Integral
+Para cada especie, la herramienta consulta simultáneamente múltiples fuentes de la API del MITECO:
+* **⚖️ Protección Legal:** Listado de Especies Silvestres (LESRPE), Catálogo Nacional (CEEA), Catálogos Autonómicos y Directivas Europeas (Aves/Hábitat).
+* **🌍 Conservación (Biología):** Categorías de amenaza según Libros Rojos (España, Mundial) y criterios UICN.
+
+### 3. Motor "Fuzzy Match" Inteligente
+¿Tienes erratas en tu lista? No hay problema.
+* Detecta errores tipográficos automáticamente (ej. *Vorderea* → *Borderea*).
+* Utiliza lógica híbrida para evitar falsos positivos taxonómicos.
+
+### 4. Exportación Directa
+Descarga los resultados en un archivo **Excel (.xlsx)** limpio y ordenado, listo para anexar a tus informes técnicos o estudios de impacto ambiental.
 
 ---
 
-## 💻 Para Desarrolladores (Instalación Local)
+## 🛠️ Cómo usarlo
 
-*Si solo quieres usar la herramienta, haz clic en el botón de arriba. Si eres desarrollador y quieres ejecutar el código en tu máquina, sigue estos pasos:*
+### Opción A: Versión Web (Recomendada)
+No necesitas instalar nada. Accede a la versión desplegada en la nube:
+👉 **[Abrir EIDOScopio en Render](https://eidoscopio.onrender.com)**
 
-### Requisitos
-* Python 3.9+
-* Git
+### Opción B: Ejecución Local (Para desarrolladores)
+Si prefieres correr el código en tu propia máquina:
 
-### Pasos
-1.  Clonar el repositorio:
+1.  **Clonar el repositorio:**
     ```bash
-    git clone [https://github.com/TU_USUARIO/EIDOScopio.git](https://github.com/TU_USUARIO/EIDOScopio.git)
+    git clone [https://github.com/aaronque/EIDOScopio.git](https://github.com/aaronque/EIDOScopio.git)
     cd EIDOScopio
     ```
-2.  Instalar dependencias:
+2.  **Instalar dependencias:**
     ```bash
     pip install -r requirements.txt
     ```
-3.  Ejecutar:
+3.  **Lanzar la aplicación:**
     ```bash
     python app.py
     ```
 
-## 📄 Fuente de Datos
-Datos obtenidos del servicio web público del **IEPNB** (MITECO).
-* [API EIDOS](https://iepnb.gob.es/servicio/externo/ServicioWebEidos)
+## ⚙️ Tecnologías
+
+* **Frontend:** Dash & Bootstrap.
+* **Backend:** Python 3 (Concurrent Futures para paralelismo).
+* **Datos:** API pública del IEPNB (sin necesidad de API Key).
+* **Algoritmos:** RapidFuzz para la corrección de nombres.
+
+## 📄 Nota Legal
+
+Esta aplicación es una herramienta de consulta desarrollada por terceros para facilitar el acceso a los datos públicos. **No tiene vinculación oficial con el MITECO.** Para fines legales vinculantes, contraste siempre la información con los documentos oficiales (BOE/BOC).
 
 ## 📝 Licencia
-MIT License.
+
+Este proyecto se distribuye bajo la **Licencia MIT**, lo que permite su uso, modificación y distribución libremente, siempre que se mantenga la atribución al autor original.
