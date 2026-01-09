@@ -43,7 +43,7 @@ Si prefieres correr el código en tu propia máquina:
    ```bash
    git clone [https://github.com/aaronque/EIDOScopio.git](https://github.com/aaronque/EIDOScopio.git)
    cd EIDOScopio
-    ```
+
 2.  **Instalar dependencias:**
     ```bash
     pip install -r requirements.txt
