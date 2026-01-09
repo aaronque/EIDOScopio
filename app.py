@@ -134,26 +134,54 @@ def obtener_lista_patron_optimizada():
 
 def intento_fuzzy_match(nombre_buscado: str, lista_referencia: dict, umbral=85):
     """
-    Busca el nombre más parecido en la lista de referencia.
-    CAMBIO: Usamos fuzz.partial_ratio.
-    Esto permite encontrar el nombre incluso si en la base de datos tiene 
-    el Autor al final (ej. 'Borderea pyrenaica Miégev.'), ignorando la diferencia de longitud.
+    Busca el nombre más parecido en la lista de referencia con lógica taxonómica:
+    1. Usa partial_ratio para encontrar candidatos potenciales (flexibilidad).
+    2. Aplica un filtro de 'Prefijo' para asegurar que el Género coincide.
     """
     if not lista_referencia:
         return None
     
-    # partial_ratio busca la mejor alineación de la subcadena
-    resultado = process.extractOne(
+    # 1. Buscamos el mejor candidato "flexible"
+    match = process.extractOne(
         nombre_buscado, 
         lista_referencia.keys(), 
         scorer=fuzz.partial_ratio
     )
     
-    if resultado:
-        match_name, score, _ = resultado
-        if score >= umbral:
-            return lista_referencia[match_name], match_name, score
-    return None
+    if not match:
+        return None
+
+    match_name, score, _ = match
+    
+    # Si el score inicial es bajo, descartamos directo
+    if score < umbral:
+        return None
+
+    # 2. VALIDACIÓN DE PREFIJO (El "Filtro Anti-Gamusinus")
+    # Taxonomía: El principio del nombre (Género) es sagrado.
+    
+    # CASO A: El usuario escribió algo MÁS LARGO que el resultado (Ej: Gamusinus [9] vs Fusinus [7])
+    # partial_ratio falla aquí porque desliza la palabra corta dentro de la larga inventada.
+    # Solución: Exigimos similitud estricta en la cadena completa.
+    if len(nombre_buscado) > len(match_name):
+        strict_score = fuzz.ratio(nombre_buscado, match_name)
+        if strict_score < umbral:
+            return None # Falso positivo: Gamusinus no es Fusinus
+            
+    # CASO B: El usuario escribió algo MÁS CORTO o IGUAL (Ej: Vorderea vs Borderea pyrenaica Miégev.)
+    # Aquí partial_ratio funciona bien, PERO debemos evitar que coincida solo por el final (Avenula... pyrenaica).
+    # Solución: Recortamos el resultado al tamaño de la búsqueda y comparamos el inicio.
+    else:
+        recorte_ref = match_name[:len(nombre_buscado)]
+        # Comparamos "Vorderea pyrenaica" con "Borderea pyrenaica" (ignorando " Miégev.")
+        prefix_score = fuzz.ratio(nombre_buscado, recorte_ref)
+        
+        # Si el inicio no se parece, es un falso positivo (ej: Avenula vs Vorderea)
+        if prefix_score < umbral:
+            return None 
+
+    # Si pasa los filtros, es un match válido
+    return lista_referencia[match_name], match_name, score
 
 # ============================
 # Funciones API Principales
