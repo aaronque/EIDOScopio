@@ -75,21 +75,28 @@ def _get_json(endpoint: str, params: dict):
 
 @cache.memoize(expire=86400)  # Cachear la lista patrón por 24 horas
 def obtener_lista_patron_simplificada():
-    """
-    Descarga una versión ligera de la taxonomía para Fuzzy Matching.
-    Equivalente a eidos_clean_checklist() del paquete R.
-    """
     try:
-        # Solicitamos solo ID y nombre científico para no saturar memoria
         endpoint = "/v_taxonomia"
-        params = {"select": "taxonid,scientificname"} 
         
-        r = _session.get(f"{API_BASE_URL}{endpoint}", params=params, timeout=(10, 30))
+        # --- CAMBIO AQUÍ ---
+        # Añadimos 'limit': 200000 para asegurarnos de bajar TODAS las especies.
+        # Sin esto, la API solo nos manda las primeras 100.
+        params = {
+            "select": "taxonid,scientificname",
+            "limit": 200000  
+        } 
+        # -------------------
+        
+        print("Descargando lista patrón para Fuzzy Match...") # Debug log
+        r = _session.get(f"{API_BASE_URL}{endpoint}", params=params, timeout=(10, 45)) # Subimos un poco el timeout
+        
         if r.status_code != 200:
+            print(f"Error API Checklist: {r.status_code}")
             return {}
         
         data = r.json()
-        # Crear diccionario {nombre: taxonid}
+        print(f"Lista patrón descargada con {len(data)} especies.") # Veremos esto en el log
+        
         referencia = {}
         for item in data:
             name = item.get('scientificname')
@@ -98,7 +105,7 @@ def obtener_lista_patron_simplificada():
                 referencia[name] = tid
         return referencia
     except Exception as e:
-        print(f"Error descargando lista patrón: {e}")
+        print(f"Excepción descargando lista patrón: {e}")
         return {}
 
 def intento_fuzzy_match(nombre_buscado: str, lista_referencia: dict, umbral=90):
