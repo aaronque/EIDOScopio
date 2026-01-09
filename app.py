@@ -1,4 +1,5 @@
-# app.py (final con Fuzzy Matching): corrección de erratas y búsqueda aproximada
+# app.py (Versión Final Corregida)
+# Incluye: Fuzzy Matching + Fix para KeyError cuando no hay fallos
 # Despliegue: usar `gunicorn app:server`
 
 import os
@@ -19,7 +20,7 @@ import diskcache
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# --- NUEVA LIBRERÍA PARA FUZZY MATCHING ---
+# --- IMPORTANTE: Librería para Fuzzy Matching ---
 from rapidfuzz import process, fuzz
 
 # ============================
@@ -27,7 +28,7 @@ from rapidfuzz import process, fuzz
 # ============================
 API_BASE_URL = "https://iepnb.gob.es/api/especie"
 
-# Ruta de cache segura
+# Ruta de cache segura (persistente en disco local si es posible, o efímera en /tmp)
 cache_dir = os.getenv("CACHE_DIR", "/tmp/eidos-cache")
 os.makedirs(cache_dir, exist_ok=True)
 cache = diskcache.Cache(cache_dir)
@@ -45,7 +46,7 @@ _adapter = HTTPAdapter(max_retries=_retry)
 _session.mount("http://", _adapter)
 _session.mount("https://", _adapter)
 
-# Throttle
+# Throttle (Límite de velocidad)
 _RATE = float(os.getenv("EIDOS_RATE", "4"))
 _MIN_INTERVAL = 1.0 / _RATE if _RATE > 0 else 0
 _last_call = 0.0
@@ -76,23 +77,19 @@ def _get_json(endpoint: str, params: dict):
 def obtener_lista_patron_simplificada():
     """
     Descarga una versión ligera de la taxonomía para Fuzzy Matching.
-    Equivalente a eidos_clean_checklist() del PDF.
+    Equivalente a eidos_clean_checklist() del paquete R.
     """
     try:
         # Solicitamos solo ID y nombre científico para no saturar memoria
-        # Nota: Asumimos que 'scientificname' o 'name' existen en v_taxonomia
         endpoint = "/v_taxonomia"
         params = {"select": "taxonid,scientificname"} 
         
-        # Paginación o límite alto para traer el grueso (ajustar según API real)
-        # EIDOS suele permitir límites altos o CSV. Aquí usamos JSON estándar.
         r = _session.get(f"{API_BASE_URL}{endpoint}", params=params, timeout=(10, 30))
         if r.status_code != 200:
             return {}
         
         data = r.json()
-        # Crear diccionario {nombre_normalizado: taxonid}
-        # Normalizamos para mejorar el matching
+        # Crear diccionario {nombre: taxonid}
         referencia = {}
         for item in data:
             name = item.get('scientificname')
@@ -106,7 +103,7 @@ def obtener_lista_patron_simplificada():
 
 def intento_fuzzy_match(nombre_buscado: str, lista_referencia: dict, umbral=90):
     """
-    Busca el nombre más parecido en la lista de referencia usando Levenshtein.
+    Busca el nombre más parecido en la lista de referencia.
     Retorna (taxon_id, nombre_encontrado, score) o None.
     """
     if not lista_referencia:
@@ -129,7 +126,7 @@ def intento_fuzzy_match(nombre_buscado: str, lista_referencia: dict, umbral=90):
 # Funciones API Principales
 # ============================
 def obtener_id_por_nombre(nombre_cientifico: str):
-    """Busca el ID de taxón para un nombre científico (RPC Exacto)."""
+    """Busca el ID de taxón para un nombre científico (Exacto)."""
     try:
         r = _session.get(
             f"{API_BASE_URL}/rpc/obtenertaxonespornombre",
@@ -227,13 +224,15 @@ def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df.copy()
     
-    # Añadimos 'Notas' a las fijas
+    # 1) Fijas al inicio (Incluimos 'Notas' aquí)
     fixed = ["Especie", "Grupo taxonómico", "Nombre común", "Notas"]
     fixed_present = [c for c in fixed if c in df.columns]
 
+    # 2) Columnas legales dinámicas
     base_exclude = set(BASE_COLS) - {"Error"}
     legales = [c for c in df.columns if c not in base_exclude and c != "Error"]
 
+    # 3) Clasificación
     auton = [c for c in legales if c.startswith("Catálogo - ")]
     def es_nacional(c: str) -> bool:
         cl = _normalize(c)
@@ -241,6 +240,7 @@ def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
     nacional = [c for c in legales if c not in auton and es_nacional(c)]
     internacional = [c for c in legales if c not in auton and c not in nacional]
 
+    # 4) Prioridad Intl
     patrones_intl = [("directiva aves", 1), ("aves", 2), ("directiva habitat", 3), ("habitat", 4), ("habitats", 4), ("cites", 5), ("berna", 6), ("bonn", 7), ("cms", 7), ("aewa", 8)]
     def intl_priority(name: str) -> int:
         n = _normalize(name)
@@ -249,13 +249,16 @@ def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
         return 100
     internacional_sorted = sorted(internacional, key=lambda x: (intl_priority(x), x))
 
+    # 5) Nacional
     def is_cat_nacional(name: str) -> bool: return _normalize(name) == "catalogo nacional"
     nacional_sorted = sorted(nacional, key=lambda x: (0 if is_cat_nacional(x) else 1, x))
 
+    # 6) Autonómicas
     ccaa_order = ["Andalucía","Aragón","Asturias","Illes Balears","Canarias","Cantabria","Castilla-La Mancha","Castilla y León","Cataluña","Ceuta","Comunitat Valenciana","Extremadura","Galicia","La Rioja","Comunidad de Madrid","Melilla","Región de Murcia","Navarra","País Vasco"]
     rank_ccaa = {f"Catálogo - {n}": i for i, n in enumerate(ccaa_order)}
     auton_sorted = sorted(auton, key=lambda x: (rank_ccaa.get(x, 999), x))
 
+    # 7) Construir orden
     ordered = fixed_present + internacional_sorted + nacional_sorted + auton_sorted
     leftover = [c for c in df.columns if c not in ordered and c not in {"protegido"}]
     
@@ -273,9 +276,7 @@ def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
 # ============================
 def _proc_nombre(nombre: str):
     """
-    Proceso mejorado con Fuzzy Matching:
-    1. Busca exacto.
-    2. Si falla, carga lista patrón y busca difuso.
+    Proceso: Exacto -> (si falla) -> Cargar Lista -> Fuzzy -> (si falla) -> Error
     """
     nombre_limpio = nombre.strip()
     # 1. Intento exacto
@@ -284,20 +285,19 @@ def _proc_nombre(nombre: str):
 
     # 2. Intento Fuzzy si falla el exacto
     if not taxon_id:
-        # Cargamos la referencia (cacheada, rápida tras el primer uso)
+        # Esto se ejecuta rápido si la cache ya tiene la lista
         lista_ref = obtener_lista_patron_simplificada()
         if lista_ref:
             match = intento_fuzzy_match(nombre_limpio, lista_ref, umbral=85)
             if match:
                 taxon_id, nombre_encontrado, score = match
-                # Actualizamos el nombre para el reporte, pero indicamos la corrección
                 nota_fuzzy = f"Corregido autom. (similitud {score:.0f}%): '{nombre_limpio}' -> '{nombre_encontrado}'"
-                nombre_limpio = nombre_encontrado # Usamos el nombre correcto para la tabla
+                nombre_limpio = nombre_encontrado 
 
     if not taxon_id:
-        return {"Especie": nombre, "Grupo taxonómico": "-", "Nombre común": "-", "Error": "Taxón no encontrado (incluso tras búsqueda difusa)", "Notas": "-"}
+        return {"Especie": nombre, "Grupo taxonómico": "-", "Nombre común": "-", "Error": "Taxón no encontrado", "Notas": "-"}
 
-    # 3. Obtener datos con el ID (sea exacto o fuzzy)
+    # 3. Datos finales
     datos = obtener_datos_proteccion(taxon_id, nombre_limpio)
     datos["Grupo taxonómico"] = obtener_grupo_taxonomico_por_id(taxon_id) or "-"
     datos["Nombre común"] = obtener_nombre_comun_por_id(taxon_id) or "-"
@@ -307,7 +307,7 @@ def _proc_nombre(nombre: str):
 def _proc_id(taxon_id: int):
     nombre = obtener_nombre_por_id(taxon_id)
     if not nombre:
-        return {"Especie": f"ID: {taxon_id}", "Grupo taxonómico": "-", "Nombre común": "-", "Error": "Nombre científico no encontrado", "Notas": "-"}
+        return {"Especie": f"ID: {taxon_id}", "Grupo taxonómico": "-", "Nombre común": "-", "Error": "ID no encontrado", "Notas": "-"}
     datos = obtener_datos_proteccion(taxon_id, nombre)
     datos["Grupo taxonómico"] = obtener_grupo_taxonomico_por_id(taxon_id) or "-"
     datos["Nombre común"] = obtener_nombre_comun_por_id(taxon_id) or "-"
@@ -320,8 +320,7 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
     listado_nombres = listado_nombres or []
     listado_ids = listado_ids or []
     
-    # Precarga de la lista patrón en el hilo principal si hay nombres para buscar
-    # Esto evita race conditions o cargas múltiples dentro de los threads
+    # Precarga lista patrón si hay nombres (para evitar bloqueo en threads)
     if listado_nombres:
         obtener_lista_patron_simplificada()
 
@@ -337,11 +336,11 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
         if progress_callback:
             progress_callback((items_procesados, total_items))
 
-    tareas = []
-    # ThreadPoolExecutor para concurrencia
     with ThreadPoolExecutor(max_workers=4) as ex:
+        tareas = []
         tareas += [ex.submit(_proc_nombre, n) for n in listado_nombres]
         tareas += [ex.submit(_proc_id, i) for i in listado_ids]
+        
         for fut in as_completed(tareas):
             fila = fut.result()
             if fila.get("Error") and fila["Error"] != "-":
@@ -355,11 +354,20 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
         return pd.DataFrame()
 
     df = pd.DataFrame(datos_para_tabla)
+
+    # --- FIX CLAVE: Asegurar columnas obligatorias ---
+    # Esto evita el KeyError si todo fue un éxito y nadie trajo la columna "Error"
+    cols_obligatorias = ["Error", "Notas", "Especie", "Grupo taxonómico", "Nombre común"]
+    for col in cols_obligatorias:
+        if col not in df.columns:
+            df[col] = "-"
+    # --------------------------------------------------
+
     df.fillna('-', inplace=True)
     return df
 
 # ============================
-# App Dash (Solo cambios mínimos en UI)
+# App Dash
 # ============================
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], background_callback_manager=background_callback_manager)
 server = app.server
@@ -371,7 +379,7 @@ sidebar = html.Div(
             html.H5("🔎 Buscador de Especies", className="text-muted"),
             html.Hr(),
             html.P("Explora el estatus legal de la biodiversidad española.", className="lead"),
-            dbc.Badge("Fuzzy Match Activo", color="info", className="mb-2"), # Indicador visual
+            dbc.Badge("Fuzzy Match Activo", color="info", className="mb-2"),
         ]),
         html.A(html.Img(src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png", style={"width": "28px", "height": "28px"}), href="https://github.com/aaronque/EIDOScopio", target="_blank", style={"marginTop": "auto", "alignSelf": "center"}),
     ],
@@ -385,14 +393,14 @@ content = html.Div(
                 [
                     html.P("- Por nombre científico: uno por línea."),
                     html.P("- Por ID de EIDOS: números separados."),
-                    html.P("- **Corrección de errores:** Si escribes mal un nombre (ej. 'Vorderea'), el sistema intentará encontrar el correcto automáticamente."),
+                    html.P("- **Autocorrección:** Si escribes mal un nombre, intentaremos corregirlo."),
                 ],
                 title="ℹ️ Ver instrucciones de uso",
             )
         ]),
         dbc.ButtonGroup([dbc.Button("Cargar datos de ejemplo", id="btn-ejemplo", color="secondary"), dbc.Button("🧹 Limpiar datos", id="btn-limpiar", color="light")], className="mt-3 mb-3"),
         dbc.Row([
-            dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nVorderea pyrenaica (error intencionado)...", style={'width': '100%', 'height': 200})),
+            dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nVorderea pyrenaica...", style={'width': '100%', 'height': 200})),
             dbc.Col(dcc.Textarea(id='area-ids', placeholder="13431, 9322...", style={'width': '100%', 'height': 200})),
         ]),
         dbc.Button("🔎 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
@@ -405,8 +413,9 @@ content = html.Div(
 
 app.layout = html.Div([dcc.Store(id='store-resultados'), dcc.Store(id='run-flag', data=False), dcc.Download(id='download-excel'), sidebar, content])
 
-# ... (Resto de callbacks idénticos al original, solo cambia la lógica interna de _proc_nombre) ...
-
+# ============================
+# Callbacks
+# ============================
 @app.callback(
     Output('area-nombres', 'value'),
     Output('area-ids', 'value'),
@@ -415,8 +424,7 @@ app.layout = html.Div([dcc.Store(id='store-resultados'), dcc.Store(id='run-flag'
     prevent_initial_call=True,
 )
 def set_textareas(n_ejemplo, n_limpiar):
-    # Ejemplo actualizado para probar el fuzzy match
-    ejemplo_nombres = "Lynx pardinus\nUrsus arctos\nVorderea pyrenaica" # Vorderea es un error tipico
+    ejemplo_nombres = "Lynx pardinus\nUrsus arctos\nVorderea pyrenaica"
     ejemplo_ids = "14389"
     ctx = dash.callback_context
     triggered = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
@@ -470,18 +478,18 @@ def ejecutar_busqueda(set_progress, run_flag, nombres_texto, ids_texto):
     if not lista_nombres and not lista_ids:
         return dbc.Alert("Introduce datos para buscar.", color="warning"), no_update
 
+    # Generación de tabla (con el fix de columnas aplicado)
     df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=progress_wrapper)
     
     if df_resultado.empty:
         return dbc.Alert("Sin resultados.", color="info"), no_update
 
+    # Cálculo seguro (las columnas ya existen seguro)
     columnas_legales = [c for c in df_resultado.columns if c not in BASE_COLS]
     df_resultado['protegido'] = df_resultado[columnas_legales].ne('-').any(axis=1) if columnas_legales else False
 
-    # Calculo resumen incluyendo correcciones
     total = len(lista_nombres) + len(lista_ids)
     encontrados = int((df_resultado['Error'] == '-').sum())
-    # Contamos cuántos se corrigieron
     corregidos = int(df_resultado['Notas'].str.contains("Corregido", na=False).sum())
     
     df_ordenado = ordenar_columnas_df(df_resultado)
@@ -505,11 +513,11 @@ def ejecutar_busqueda(set_progress, run_flag, nombres_texto, ids_texto):
             style_data_conditional=[
                 {
                     'if': {'filter_query': '{Notas} contains "Corregido"'},
-                    'backgroundColor': '#e3f2fd', # Azul clarito para los corregidos
+                    'backgroundColor': '#e3f2fd', 
                 },
                 {
                     'if': {'filter_query': '{Error} != "-"'},
-                    'backgroundColor': '#ffebee', # Rojo clarito para errores
+                    'backgroundColor': '#ffebee',
                 }
             ]
         ),
