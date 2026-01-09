@@ -134,16 +134,18 @@ def obtener_lista_patron_optimizada():
 
 def intento_fuzzy_match(nombre_buscado: str, lista_referencia: dict, umbral=85):
     """
-    Busca el nombre más parecido en la lista de referencia usando rapidfuzz.
+    Busca el nombre más parecido en la lista de referencia.
+    CAMBIO: Usamos fuzz.ratio en lugar de WRatio para evitar falsos positivos
+    por coincidencias parciales (ej. coincidir solo en el epíteto 'pyrenaica').
     """
     if not lista_referencia:
         return None
     
-    # process.extractOne devuelve (match_key, score, match_index)
+    # Usamos fuzz.ratio para forzar similitud en la cadena completa
     resultado = process.extractOne(
         nombre_buscado, 
         lista_referencia.keys(), 
-        scorer=fuzz.WRatio
+        scorer=fuzz.ratio 
     )
     
     if resultado:
