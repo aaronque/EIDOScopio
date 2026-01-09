@@ -1,4 +1,4 @@
-# app.py (Versión Definitiva: Fuzzy Híbrido + Estatus Conservación + CSV Opt)
+# app.py (Versión Definitiva: Fuzzy Híbrido + Estatus Conservación + CSV Optimizado)
 # Despliegue: usar `gunicorn app:server`
 
 import os
@@ -75,14 +75,13 @@ def _get_json(endpoint: str, params: dict):
         return []
 
 @cache.memoize(expire=86400)
-def obtener_lista_patron_v5():
+def obtener_lista_patron_optimizada():
     """
     Descarga la taxonomía completa en CSV pidiendo las columnas CORRECTAS.
     """
     try:
         endpoint = "/v_taxonomia"
         headers = {"Accept": "text/csv"}
-        # Usamos 'taxonid' y 'name' (según doc oficial)
         params = {
             "select": "taxonid,name", 
             "limit": 250000 
@@ -96,7 +95,6 @@ def obtener_lista_patron_v5():
             print(f"Error API Checklist: {r.status_code}")
             return {}
         
-        # Procesado manual del CSV
         contenido = io.StringIO(r.text)
         reader = csv.DictReader(contenido)
         referencia = {}
@@ -117,26 +115,26 @@ def obtener_lista_patron_v5():
 
 def intento_fuzzy_match(nombre_buscado: str, lista_referencia: dict, umbral=85):
     """
-    Lógica Híbrida Definitiva:
-    1. Partial Ratio: Permite coincidencia flexible (Borderea pyrenaica Miégev -> Vorderea pyrenaica).
-    2. Validación Prefijo: Bloquea falsos positivos cortos (Fusinus != Gamusinus).
+    Lógica Híbrida: Partial Ratio (Flexibilidad) + Validación Prefijo (Robustez).
     """
     if not lista_referencia:
         return None
     
-    # 1. Candidato por coincidencia parcial
+    # 1. Candidato por coincidencia parcial (ignora sufijos como Autor)
     match = process.extractOne(
         nombre_buscado, 
         lista_referencia.keys(), 
         scorer=fuzz.partial_ratio
     )
     
-    if not match: return None
+    if not match:
+        return None
 
     match_name, score, _ = match
-    if score < umbral: return None
+    if score < umbral:
+        return None
 
-    # 2. Validación de Prefijo (El "Filtro Anti-Gamusinus")
+    # 2. Validación de Prefijo (Evita falsos positivos tipo Gamusinus -> Fusinus)
     if len(nombre_buscado) > len(match_name):
         # Si buscamos algo más largo que el candidato, exigimos coincidencia total
         if fuzz.ratio(nombre_buscado, match_name) < umbral:
@@ -183,11 +181,11 @@ def obtener_nombre_por_id(taxon_id: int):
     except:
         return None
 
-# --- NUEVA FUNCIÓN: ESTADO DE CONSERVACIÓN (UICN / LIBRO ROJO) ---
+# --- NUEVA FUNCIÓN DE CONSERVACIÓN ---
 def obtener_datos_conservacion(taxon_id: int):
+    """Obtiene datos del Libro Rojo / UICN."""
     datos_cons = {}
     try:
-        # Endpoint documentado con _idtaxon
         r = _session.get(
             f"{API_BASE_URL}/rpc/obtenerestadosconservacionportaxonid",
             params={"_idtaxon": taxon_id},
@@ -196,25 +194,30 @@ def obtener_datos_conservacion(taxon_id: int):
         r.raise_for_status()
         lista = r.json() or []
         
+        # Agrupamos por ámbito (Mundial, Europa, España, etc.)
         por_ambito = defaultdict(list)
         
         for item in lista:
-            # Detectamos ambito/aplicaa y unimos categoría con año
+            # Detectamos el campo de ámbito (puede variar, buscamos lo más probable)
             ambito = item.get("ambito") or item.get("aplicaa") or "Desconocido"
             categoria = item.get("categoriaconservacion")
             anio = item.get("anio")
             
             if categoria:
                 texto = f"{categoria}"
-                if anio: texto += f" ({anio})"
+                if anio:
+                    texto += f" ({anio})"
                 por_ambito[ambito].append(texto)
         
+        # Formateamos para la tabla
         for amb, cats in por_ambito.items():
             col_name = f"Libro Rojo - {amb}"
+            # Nos quedamos con el más reciente o unimos todos? Unimos para no perder info.
             datos_cons[col_name] = "; ".join(sorted(set(cats)))
             
     except requests.exceptions.RequestException:
-        pass 
+        pass # Si falla conservación, no bloqueamos la fila entera
+        
     return datos_cons
 
 def obtener_datos_proteccion(taxon_id: int):
@@ -252,11 +255,14 @@ def obtener_datos_proteccion(taxon_id: int):
     return protecciones
 
 def obtener_info_taxonomica(taxon_id: int):
+    """Helpers para grupo y nombre común."""
     info = {"Grupo taxonómico": "-", "Nombre común": "-"}
     try:
+        # Grupo
         f_tax = _get_json("/v_taxonomia", {"taxonid": f"eq.{taxon_id}"})
         if f_tax: info["Grupo taxonómico"] = f_tax[0].get("taxonomicgroup", "-")
         
+        # Nombre común
         f_nom = _get_json("/v_nombrescomunes", {"idtaxon": f"eq.{taxon_id}"})
         if f_nom:
             es = [f for f in f_nom if f.get("ididioma") == 1]
@@ -274,17 +280,20 @@ def obtener_info_taxonomica(taxon_id: int):
 def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty: return df.copy()
     
+    # 1. Estructura base
     fixed = ["Especie", "Grupo taxonómico", "Nombre común", "Notas"]
     fixed_present = [c for c in fixed if c in df.columns]
 
-    # Ordenar columnas de conservación
+    # 2. Conservación (Libro Rojo)
     conservacion = [c for c in df.columns if "Libro Rojo" in c]
+    # Prioridad: Mundial > España > Otros
     def orden_cons(c):
         if "Mundial" in c: return 1
         if "España" in c: return 2
         return 3
     conservacion_sorted = sorted(conservacion, key=orden_cons)
 
+    # 3. Protección Legal
     base_exclude = set(BASE_COLS) | set(conservacion)
     legales = [c for c in df.columns if c not in base_exclude and c != "Error"]
 
@@ -292,6 +301,7 @@ def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
     nacional = [c for c in legales if c not in auton and ("nacional" in _normalize(c))]
     internacional = [c for c in legales if c not in auton and c not in nacional]
 
+    # Ordenación interna
     patrones_intl = [("directiva aves", 1), ("habitat", 2), ("cites", 3), ("berna", 4), ("bonn", 5)]
     def intl_prio(n):
         for p, i in patrones_intl: 
@@ -303,6 +313,7 @@ def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
     rank_ccaa = {f"Catálogo - {n}": i for i, n in enumerate(ccaa_order)}
     auton_sorted = sorted(auton, key=lambda x: (rank_ccaa.get(x, 999), x))
 
+    # 4. Construcción final
     ordered = fixed_present + conservacion_sorted + internacional_sorted + nacional + auton_sorted
     
     leftover = [c for c in df.columns if c not in ordered and c not in {"protegido", "Error"}]
@@ -323,13 +334,13 @@ def _proc_nombre(nombre: str):
     nota_fuzzy = "-"
 
     if not taxon_id:
-        lista_ref = obtener_lista_patron_v5()
+        lista_ref = obtener_lista_patron_optimizada()
         if lista_ref:
             match = intento_fuzzy_match(nombre_limpio, lista_ref, umbral=85)
             if match:
                 taxon_id, nombre_match, score = match
                 nota_fuzzy = f"Corregido (similitud {score:.0f}%): '{nombre_limpio}' -> '{nombre_match}'"
-                nombre_limpio = nombre_match 
+                nombre_limpio = nombre_match # Usamos el nombre corregido
 
     base = {"Especie": nombre_limpio, "Notas": nota_fuzzy}
     
@@ -337,9 +348,10 @@ def _proc_nombre(nombre: str):
         base.update({"Error": "Taxón no encontrado", "Grupo taxonómico": "-", "Nombre común": "-"})
         return base
 
+    # Obtenemos TODOS los datos
     tax = obtener_info_taxonomica(taxon_id)
     leg = obtener_datos_proteccion(taxon_id)
-    cons = obtener_datos_conservacion(taxon_id) 
+    cons = obtener_datos_conservacion(taxon_id) # <--- NUEVO
     
     return {**base, **tax, **leg, **cons}
 
@@ -351,7 +363,7 @@ def _proc_id(taxon_id: int):
     base = {"Especie": nombre, "Notas": "-"}
     tax = obtener_info_taxonomica(taxon_id)
     leg = obtener_datos_proteccion(taxon_id)
-    cons = obtener_datos_conservacion(taxon_id)
+    cons = obtener_datos_conservacion(taxon_id) # <--- NUEVO
     
     return {**base, **tax, **leg, **cons}
 
@@ -359,7 +371,7 @@ def generar_tabla_completa(nombres=None, ids=None, progress_callback=None):
     exitosos, fallidos = [], []
     nombres, ids = nombres or [], ids or []
     
-    if nombres: obtener_lista_patron_v5()
+    if nombres: obtener_lista_patron_optimizada()
 
     total = len(nombres) + len(ids)
     if total == 0: return pd.DataFrame()
@@ -374,11 +386,12 @@ def generar_tabla_completa(nombres=None, ids=None, progress_callback=None):
         tareas = [ex.submit(_proc_nombre, n) for n in nombres] + [ex.submit(_proc_id, i) for i in ids]
         for fut in as_completed(tareas):
             res = fut.result()
-            (fallidos if res.get("Error") and res.get("Error") != "-" else exitosos).append(res)
+            (fallidos if res.get("Error") else exitosos).append(res)
             update()
 
     df = pd.DataFrame(exitosos + fallidos)
     
+    # Asegurar columnas base
     for c in ["Error", "Notas", "Especie", "Grupo taxonómico", "Nombre común"]:
         if c not in df.columns: df[c] = "-"
         
@@ -386,7 +399,7 @@ def generar_tabla_completa(nombres=None, ids=None, progress_callback=None):
     return df
 
 # ============================
-# App Dash
+# App Dash (Interfaz)
 # ============================
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], background_callback_manager=background_callback_manager)
 server = app.server
@@ -437,10 +450,12 @@ def search(set_prog, run, txt_n, txt_i):
 
     df = ordenar_columnas_df(df)
     
+    # Colorear celdas de Libro Rojo y Fuzzy Match
     cond_styles = [
         {'if': {'filter_query': '{Notas} contains "Corregido"'}, 'backgroundColor': '#e3f2fd'},
         {'if': {'filter_query': '{Error} != "-"'}, 'backgroundColor': '#ffebee'}
     ]
+    # Añadimos estilo para columnas de conservación (amarillo suave si hay dato)
     for col in df.columns:
         if "Libro Rojo" in col:
             cond_styles.append({'if': {'column_id': col, 'filter_query': f'{{{col}}} != "-"'}, 'backgroundColor': '#fff3e0'})
