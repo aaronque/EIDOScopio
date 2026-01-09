@@ -135,17 +135,18 @@ def obtener_lista_patron_optimizada():
 def intento_fuzzy_match(nombre_buscado: str, lista_referencia: dict, umbral=85):
     """
     Busca el nombre más parecido en la lista de referencia.
-    CAMBIO: Usamos fuzz.ratio en lugar de WRatio para evitar falsos positivos
-    por coincidencias parciales (ej. coincidir solo en el epíteto 'pyrenaica').
+    CAMBIO: Usamos fuzz.partial_ratio.
+    Esto permite encontrar el nombre incluso si en la base de datos tiene 
+    el Autor al final (ej. 'Borderea pyrenaica Miégev.'), ignorando la diferencia de longitud.
     """
     if not lista_referencia:
         return None
     
-    # Usamos fuzz.ratio para forzar similitud en la cadena completa
+    # partial_ratio busca la mejor alineación de la subcadena
     resultado = process.extractOne(
         nombre_buscado, 
         lista_referencia.keys(), 
-        scorer=fuzz.ratio 
+        scorer=fuzz.partial_ratio
     )
     
     if resultado:
