@@ -293,11 +293,15 @@ server = app.server
 
 sidebar = html.Div([
     html.Div([
+        html.Img(
+            src="/assets/buho.png",  
+            style={"width": "120px", "display": "block", "margin": "0 auto 1rem auto"}
+            ),
         html.H2("EIDOScopio", className="display-5"),
         html.H5("🔎 Buscador de Especies", className="text-muted"),
         html.Hr(),
         html.P("Herramienta para explorar de forma masiva el estatus legal de la biodiversidad española a través de la API de EIDOS (IEPNB).", className="lead"),
-        dbc.Badge("Fuzzy Match + UICN", color="success", className="mb-2"),
+        
     ]),
     html.A(html.Img(src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png", style={"width": "28px", "height": "28px"}), href="https://github.com/aaronque/EIDOScopio", target="_blank", title="Repositorio en GitHub", style={"marginTop": "auto", "alignSelf": "center"}),
 ], style={"position": "fixed", "top": 0, "left": 0, "bottom": 0, "width": "22rem", "padding": "2rem 1rem", "background-color": "#f8f9fa", "display": "flex", "flex-direction": "column"})
