@@ -295,7 +295,7 @@ sidebar = html.Div([
     html.Div([
         html.Img(
             src="/assets/buho.png",  
-            style={"width": "400px", "display": "block", "margin": "0 auto 1rem auto"}
+            style={"width": "250px", "display": "block", "margin": "0 auto 1rem auto"}
             ),
         html.H2("EIDOScopio", className="display-5"),
         html.H5("🔎 Buscador de Especies", className="text-muted"),
