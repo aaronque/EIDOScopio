@@ -1,11 +1,11 @@
-# app.py (Versión Final Corregida)
-# Incluye: Fuzzy Matching + Fix para KeyError cuando no hay fallos
+# app.py (Versión Final - Fuzzy Match + CSV Fix)
 # Despliegue: usar `gunicorn app:server`
 
 import os
 import io
 import re
 import time
+import csv
 import unicodedata
 from threading import Lock
 from collections import defaultdict
@@ -20,7 +20,7 @@ import diskcache
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# --- IMPORTANTE: Librería para Fuzzy Matching ---
+# Librería para Fuzzy Matching
 from rapidfuzz import process, fuzz
 
 # ============================
@@ -28,7 +28,7 @@ from rapidfuzz import process, fuzz
 # ============================
 API_BASE_URL = "https://iepnb.gob.es/api/especie"
 
-# Ruta de cache segura (persistente en disco local si es posible, o efímera en /tmp)
+# Ruta de cache
 cache_dir = os.getenv("CACHE_DIR", "/tmp/eidos-cache")
 os.makedirs(cache_dir, exist_ok=True)
 cache = diskcache.Cache(cache_dir)
@@ -46,7 +46,7 @@ _adapter = HTTPAdapter(max_retries=_retry)
 _session.mount("http://", _adapter)
 _session.mount("https://", _adapter)
 
-# Throttle (Límite de velocidad)
+# Throttle
 _RATE = float(os.getenv("EIDOS_RATE", "4"))
 _MIN_INTERVAL = 1.0 / _RATE if _RATE > 0 else 0
 _last_call = 0.0
@@ -57,8 +57,9 @@ BASE_COLS = {"Especie", "Grupo taxonómico", "Nombre común", "Error", "protegid
 # ============================
 # Utilidades HTTP y Fuzzy
 # ============================
+
 def _get_json(endpoint: str, params: dict):
-    """GET con sesión, timeouts, retries y throttle básico."""
+    """GET para endpoints pequeños (info de especie)."""
     global _last_call
     try:
         with _lock:
@@ -73,50 +74,72 @@ def _get_json(endpoint: str, params: dict):
     except requests.exceptions.RequestException:
         return []
 
-@cache.memoize(expire=86400)  # Cachear la lista patrón por 24 horas
-def obtener_lista_patron_simplificada():
+@cache.memoize(expire=86400)
+def obtener_lista_patron_optimizada():
+    """
+    Descarga la taxonomía completa en CSV pidiendo las columnas CORRECTAS.
+    Basado en la documentación: columna 'name' y 'taxonid'.
+    """
     try:
         endpoint = "/v_taxonomia"
         
-        # --- CAMBIO AQUÍ ---
-        # Añadimos 'limit': 200000 para asegurarnos de bajar TODAS las especies.
-        # Sin esto, la API solo nos manda las primeras 100.
-        params = {
-            "select": "taxonid,scientificname",
-            "limit": 200000  
-        } 
-        # -------------------
+        # 1. Pedimos formato CSV para máxima velocidad y menor memoria
+        headers = {"Accept": "text/csv"}
         
-        print("Descargando lista patrón para Fuzzy Match...") # Debug log
-        r = _session.get(f"{API_BASE_URL}{endpoint}", params=params, timeout=(10, 45)) # Subimos un poco el timeout
+        # 2. Corregimos parámetros según doc oficial 
+        # select: 'taxonid' y 'name' (antes fallaba por pedir scientificname)
+        params = {
+            "select": "taxonid,name", 
+            "limit": 250000 # Límite alto para asegurar que baja todo
+        }
+        
+        print("📥 Iniciando descarga de Lista Patrón (CSV)...")
+        t0 = time.time()
+        
+        # Timeout extendido para la descarga grande
+        r = _session.get(
+            f"{API_BASE_URL}{endpoint}", 
+            params=params, 
+            headers=headers,
+            timeout=(15, 60)
+        )
         
         if r.status_code != 200:
             print(f"Error API Checklist: {r.status_code}")
             return {}
         
-        data = r.json()
-        print(f"Lista patrón descargada con {len(data)} especies.") # Veremos esto en el log
+        # 3. Procesamos CSV usando librería estándar (seguro contra comas en nombres)
+        contenido = io.StringIO(r.text)
+        reader = csv.DictReader(contenido)
         
         referencia = {}
-        for item in data:
-            name = item.get('scientificname')
-            tid = item.get('taxonid')
-            if name and tid:
-                referencia[name] = tid
+        count = 0
+        
+        for row in reader:
+            # DictReader usa los nombres de cabecera reales devueltos por la API
+            # La API devuelve keys como 'taxonid' y 'name'
+            tid = row.get('taxonid')
+            name = row.get('name')
+            
+            if tid and name:
+                referencia[name] = int(tid)
+                count += 1
+                    
+        print(f"✅ Lista patrón procesada en {time.time()-t0:.2f}s: {count} especies.")
         return referencia
+
     except Exception as e:
         print(f"Excepción descargando lista patrón: {e}")
         return {}
 
-def intento_fuzzy_match(nombre_buscado: str, lista_referencia: dict, umbral=90):
+def intento_fuzzy_match(nombre_buscado: str, lista_referencia: dict, umbral=85):
     """
-    Busca el nombre más parecido en la lista de referencia.
-    Retorna (taxon_id, nombre_encontrado, score) o None.
+    Busca el nombre más parecido en la lista de referencia usando rapidfuzz.
     """
     if not lista_referencia:
         return None
     
-    # process.extractOne devuelve (match, score, key)
+    # process.extractOne devuelve (match_key, score, match_index)
     resultado = process.extractOne(
         nombre_buscado, 
         lista_referencia.keys(), 
@@ -133,7 +156,7 @@ def intento_fuzzy_match(nombre_buscado: str, lista_referencia: dict, umbral=90):
 # Funciones API Principales
 # ============================
 def obtener_id_por_nombre(nombre_cientifico: str):
-    """Busca el ID de taxón para un nombre científico (Exacto)."""
+    """Busca el ID exacto."""
     try:
         r = _session.get(
             f"{API_BASE_URL}/rpc/obtenertaxonespornombre",
@@ -231,15 +254,13 @@ def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df.copy()
     
-    # 1) Fijas al inicio (Incluimos 'Notas' aquí)
+    # 1. Fijas al inicio (Incluye 'Notas')
     fixed = ["Especie", "Grupo taxonómico", "Nombre común", "Notas"]
     fixed_present = [c for c in fixed if c in df.columns]
 
-    # 2) Columnas legales dinámicas
     base_exclude = set(BASE_COLS) - {"Error"}
     legales = [c for c in df.columns if c not in base_exclude and c != "Error"]
 
-    # 3) Clasificación
     auton = [c for c in legales if c.startswith("Catálogo - ")]
     def es_nacional(c: str) -> bool:
         cl = _normalize(c)
@@ -247,7 +268,6 @@ def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
     nacional = [c for c in legales if c not in auton and es_nacional(c)]
     internacional = [c for c in legales if c not in auton and c not in nacional]
 
-    # 4) Prioridad Intl
     patrones_intl = [("directiva aves", 1), ("aves", 2), ("directiva habitat", 3), ("habitat", 4), ("habitats", 4), ("cites", 5), ("berna", 6), ("bonn", 7), ("cms", 7), ("aewa", 8)]
     def intl_priority(name: str) -> int:
         n = _normalize(name)
@@ -256,16 +276,13 @@ def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
         return 100
     internacional_sorted = sorted(internacional, key=lambda x: (intl_priority(x), x))
 
-    # 5) Nacional
     def is_cat_nacional(name: str) -> bool: return _normalize(name) == "catalogo nacional"
     nacional_sorted = sorted(nacional, key=lambda x: (0 if is_cat_nacional(x) else 1, x))
 
-    # 6) Autonómicas
     ccaa_order = ["Andalucía","Aragón","Asturias","Illes Balears","Canarias","Cantabria","Castilla-La Mancha","Castilla y León","Cataluña","Ceuta","Comunitat Valenciana","Extremadura","Galicia","La Rioja","Comunidad de Madrid","Melilla","Región de Murcia","Navarra","País Vasco"]
     rank_ccaa = {f"Catálogo - {n}": i for i, n in enumerate(ccaa_order)}
     auton_sorted = sorted(auton, key=lambda x: (rank_ccaa.get(x, 999), x))
 
-    # 7) Construir orden
     ordered = fixed_present + internacional_sorted + nacional_sorted + auton_sorted
     leftover = [c for c in df.columns if c not in ordered and c not in {"protegido"}]
     
@@ -283,7 +300,7 @@ def ordenar_columnas_df(df: pd.DataFrame) -> pd.DataFrame:
 # ============================
 def _proc_nombre(nombre: str):
     """
-    Proceso: Exacto -> (si falla) -> Cargar Lista -> Fuzzy -> (si falla) -> Error
+    1. Exacto -> 2. Fuzzy (si exacto falla) -> 3. Datos
     """
     nombre_limpio = nombre.strip()
     # 1. Intento exacto
@@ -292,8 +309,7 @@ def _proc_nombre(nombre: str):
 
     # 2. Intento Fuzzy si falla el exacto
     if not taxon_id:
-        # Esto se ejecuta rápido si la cache ya tiene la lista
-        lista_ref = obtener_lista_patron_simplificada()
+        lista_ref = obtener_lista_patron_optimizada()
         if lista_ref:
             match = intento_fuzzy_match(nombre_limpio, lista_ref, umbral=85)
             if match:
@@ -327,9 +343,9 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
     listado_nombres = listado_nombres or []
     listado_ids = listado_ids or []
     
-    # Precarga lista patrón si hay nombres (para evitar bloqueo en threads)
+    # Precarga lista patrón (versión optimizada) si hay nombres
     if listado_nombres:
-        obtener_lista_patron_simplificada()
+        obtener_lista_patron_optimizada()
 
     total_items = len(listado_nombres) + len(listado_ids)
     if total_items == 0:
@@ -362,14 +378,12 @@ def generar_tabla_completa(listado_nombres=None, listado_ids=None, progress_call
 
     df = pd.DataFrame(datos_para_tabla)
 
-    # --- FIX CLAVE: Asegurar columnas obligatorias ---
-    # Esto evita el KeyError si todo fue un éxito y nadie trajo la columna "Error"
+    # --- FIX: Asegurar columnas obligatorias ---
     cols_obligatorias = ["Error", "Notas", "Especie", "Grupo taxonómico", "Nombre común"]
     for col in cols_obligatorias:
         if col not in df.columns:
             df[col] = "-"
-    # --------------------------------------------------
-
+    
     df.fillna('-', inplace=True)
     return df
 
@@ -400,14 +414,14 @@ content = html.Div(
                 [
                     html.P("- Por nombre científico: uno por línea."),
                     html.P("- Por ID de EIDOS: números separados."),
-                    html.P("- **Autocorrección:** Si escribes mal un nombre, intentaremos corregirlo."),
+                    html.P("- **Autocorrección:** Si escribes mal un nombre (ej. 'Vorderea'), el sistema buscará el correcto."),
                 ],
                 title="ℹ️ Ver instrucciones de uso",
             )
         ]),
         dbc.ButtonGroup([dbc.Button("Cargar datos de ejemplo", id="btn-ejemplo", color="secondary"), dbc.Button("🧹 Limpiar datos", id="btn-limpiar", color="light")], className="mt-3 mb-3"),
         dbc.Row([
-            dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nVorderea pyrenaica...", style={'width': '100%', 'height': 200})),
+            dbc.Col(dcc.Textarea(id='area-nombres', placeholder="Achondrostoma arcasii\nVorderea pyrenaica (error)...", style={'width': '100%', 'height': 200})),
             dbc.Col(dcc.Textarea(id='area-ids', placeholder="13431, 9322...", style={'width': '100%', 'height': 200})),
         ]),
         dbc.Button("🔎 Comenzar Búsqueda", id="btn-busqueda", color="primary", size="lg", className="mt-3 w-100"),
@@ -485,13 +499,11 @@ def ejecutar_busqueda(set_progress, run_flag, nombres_texto, ids_texto):
     if not lista_nombres and not lista_ids:
         return dbc.Alert("Introduce datos para buscar.", color="warning"), no_update
 
-    # Generación de tabla (con el fix de columnas aplicado)
     df_resultado = generar_tabla_completa(lista_nombres, lista_ids, progress_callback=progress_wrapper)
     
     if df_resultado.empty:
         return dbc.Alert("Sin resultados.", color="info"), no_update
 
-    # Cálculo seguro (las columnas ya existen seguro)
     columnas_legales = [c for c in df_resultado.columns if c not in BASE_COLS]
     df_resultado['protegido'] = df_resultado[columnas_legales].ne('-').any(axis=1) if columnas_legales else False
 
