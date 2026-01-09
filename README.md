@@ -40,10 +40,10 @@ No necesitas instalar nada. Accede a la versión desplegada en la nube:
 Si prefieres correr el código en tu propia máquina:
 
 1.  **Clonar el repositorio:**
-   ```bash
-   git clone [https://github.com/aaronque/EIDOScopio.git](https://github.com/aaronque/EIDOScopio.git)
-   cd EIDOScopio
-
+       ```bash
+    git clone https://github.com/aaronque/EIDOScopio.git
+    cd EIDOScopio
+    ```
 2.  **Instalar dependencias:**
     ```bash
     pip install -r requirements.txt
