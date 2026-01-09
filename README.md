@@ -41,7 +41,7 @@ Si prefieres correr el código en tu propia máquina:
 
 1.  **Clonar el repositorio:**
     ```bash
-    git clone [https://github.com/aaronque/EIDOScopio.git](https://github.com/aaronque/EIDOScopio.git)
+    git clone https://github.com/aaronque/EIDOScopio.git
     cd EIDOScopio
     ```
 2.  **Instalar dependencias:**
