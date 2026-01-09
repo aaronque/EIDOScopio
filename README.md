@@ -3,7 +3,7 @@
 > **La herramienta de consulta masiva para el Inventario Español del Patrimonio Natural y Biodiversidad.**
 
 [![Render](https://img.shields.io/badge/Render-Abrir_App_Web-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://eidoscopio.onrender.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 
 ## ⚡ El Problema vs. La Solución
 
